@@ -1,0 +1,282 @@
+/* Building blocks shared by the movie and TV detail sheets.
+ *
+ * These return a node plus an `update()` so a tap can refresh just the affected
+ * control instead of re-rendering the sheet — which would throw away the user's
+ * scroll position halfway down a season's episode list.
+ */
+
+import { h, icon, posterBox, displayTitle, toast } from '../ui.js';
+import { profileUrl } from '../tmdb.js';
+import {
+  state,
+  getItem,
+  setRating,
+  clearRating,
+  setWatchlist,
+  setTitlePref,
+} from '../store.js';
+
+/* ---------- hero ---------- */
+
+export function heroBlock(meta, { onLangChange, facts }) {
+  const stored = getItem(meta.type, meta.id);
+  const titleEl = h('h1', {}, displayTitle(meta, stored));
+
+  // The secondary line shows whichever title isn't currently primary, so a
+  // foreign film always displays both names somewhere on the sheet.
+  const altEl = meta.foreign
+    ? h('p', { class: 'alt-title' }, otherTitle(meta, stored))
+    : null;
+
+  let toggle = null;
+  if (meta.foreign) {
+    const mk = (pref, label) =>
+      h(
+        'button',
+        {
+          type: 'button',
+          'aria-pressed': String(titlePrefOf(stored) === pref),
+          onclick: () => {
+            setTitlePref(meta.type, meta.id, pref);
+            const s = getItem(meta.type, meta.id);
+            titleEl.textContent = displayTitle(meta, s);
+            if (altEl) altEl.textContent = otherTitle(meta, s);
+            for (const b of toggle.children) {
+              b.setAttribute('aria-pressed', String(b.dataset.pref === pref));
+            }
+            onLangChange?.(pref);
+          },
+          dataset: { pref },
+        },
+        label
+      );
+    toggle = h('div', { class: 'lang-toggle' }, mk('en', 'English'), mk('original', 'Original'));
+  }
+
+  return h(
+    'div',
+    { class: 'hero' },
+    posterBox(meta, 'w342'),
+    h(
+      'div',
+      { class: 'info' },
+      titleEl,
+      altEl,
+      h('p', { class: 'facts' }, facts),
+      meta.genres?.length
+        ? h('div', { class: 'genres' }, meta.genres.map((g) => h('span', {}, g)))
+        : null,
+      toggle
+    )
+  );
+}
+
+function titlePrefOf(stored) {
+  return stored?.titlePref || state.settings.defaultTitleLang || 'en';
+}
+
+function otherTitle(meta, stored) {
+  return titlePrefOf(stored) === 'original' ? meta.title : meta.originalTitle;
+}
+
+/* ---------- scores ---------- */
+
+export function scoresBlock(meta) {
+  const node = h('div', { class: 'scores' });
+
+  const cell = (cls, label) => {
+    const val = h('div', { class: 's-val' }, '—');
+    node.append(
+      h('div', { class: `score ${cls}` }, h('div', { class: 's-label' }, label), val)
+    );
+    return val;
+  };
+
+  const imdbVal = cell('imdb', 'IMDb');
+  const rtVal = cell('rt', 'Rotten Tom.');
+  const tmdbVal = cell('tmdb', 'TMDB');
+
+  const update = () => {
+    const s = getItem(meta.type, meta.id)?.scores || {};
+    imdbVal.textContent = s.imdb != null ? s.imdb.toFixed(1) : '—';
+    rtVal.textContent = s.rt != null ? `${s.rt}%` : '—';
+    tmdbVal.textContent = meta.tmdbScore != null ? meta.tmdbScore.toFixed(1) : '—';
+  };
+  update();
+
+  return { node, update };
+}
+
+/* ---------- personal rating ---------- */
+
+export function ratingRow(meta, onChange) {
+  const mk = (kind, label, iconName) =>
+    h(
+      'button',
+      {
+        type: 'button',
+        class: `rating-btn ${kind}`,
+        'aria-pressed': 'false',
+        onclick: () => {
+          const next = setRating(meta.type, meta.id, kind, snapshot(meta));
+          update();
+          onChange?.(next);
+        },
+      },
+      icon(iconName),
+      label
+    );
+
+  const up = mk('up', 'Liked it', 'up');
+  const down = mk('down', 'Not for me', 'down');
+  const clearBtn = h(
+    'button',
+    {
+      type: 'button',
+      class: 'rating-btn clear',
+      'aria-label': 'Clear rating',
+      title: 'Clear rating',
+      onclick: () => {
+        clearRating(meta.type, meta.id);
+        update();
+        onChange?.(null);
+      },
+    },
+    icon('close')
+  );
+
+  const node = h('div', { class: 'rating-row' }, up, down, clearBtn);
+
+  function update() {
+    const r = getItem(meta.type, meta.id)?.rating || null;
+    up.setAttribute('aria-pressed', String(r === 'up'));
+    down.setAttribute('aria-pressed', String(r === 'down'));
+    clearBtn.hidden = !r;
+  }
+  update();
+
+  return { node, update };
+}
+
+/* ---------- watchlist ---------- */
+
+export function watchlistAction(meta, onChange) {
+  const label = h('span', {}, 'Add to watchlist');
+  const node = h(
+    'button',
+    {
+      type: 'button',
+      class: 'action primary',
+      'aria-pressed': 'false',
+      onclick: () => {
+        const on = !(getItem(meta.type, meta.id)?.inWatchlist ?? false);
+        setWatchlist(meta.type, meta.id, on, snapshot(meta));
+        update();
+        toast(on ? 'Added to watchlist' : 'Removed from watchlist');
+        onChange?.(on);
+      },
+    },
+    label
+  );
+
+  function update() {
+    const on = getItem(meta.type, meta.id)?.inWatchlist ?? false;
+    node.setAttribute('aria-pressed', String(on));
+    label.textContent = on ? 'On your watchlist — remove' : 'Add to watchlist';
+  }
+  update();
+
+  return { node, update };
+}
+
+/* ---------- watched checkbox ---------- */
+
+export function watchedAction(label, isOn, setOn) {
+  const box = h('div', { class: 'box' }, icon('check'));
+  const text = h('span', {}, label);
+  const node = h(
+    'button',
+    {
+      type: 'button',
+      class: 'action',
+      'aria-pressed': 'false',
+      onclick: () => {
+        setOn(!isOn());
+        update();
+      },
+    },
+    box,
+    text
+  );
+
+  function update() {
+    node.setAttribute('aria-pressed', String(Boolean(isOn())));
+  }
+  update();
+
+  return { node, update };
+}
+
+/* ---------- cast ---------- */
+
+export function castRow(cast, onOpenPerson) {
+  if (!cast?.length) return null;
+  return h(
+    'div',
+    { class: 'cast' },
+    cast.slice(0, 8).map((c) =>
+      h(
+        'button',
+        { type: 'button', class: 'cast-member', onclick: () => onOpenPerson(c) },
+        h(
+          'div',
+          { class: 'avatar' },
+          profileUrl(c.profile)
+            ? h('img', { src: profileUrl(c.profile), alt: '', loading: 'lazy' })
+            : initials(c.name)
+        ),
+        h('div', { class: 'c-name' }, c.name),
+        c.character ? h('div', { class: 'c-role' }, c.character) : null
+      )
+    )
+  );
+}
+
+function initials(name) {
+  return String(name || '?')
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((w) => w[0])
+    .join('')
+    .toUpperCase();
+}
+
+/* ---------- metadata snapshot ---------- */
+
+/**
+ * The subset of API metadata worth persisting alongside a user's choices, so
+ * lists render (and sort) offline without re-fetching every title.
+ */
+export function snapshot(meta) {
+  return {
+    type: meta.type,
+    id: meta.id,
+    title: meta.title,
+    originalTitle: meta.originalTitle,
+    originalLanguage: meta.originalLanguage,
+    foreign: meta.foreign,
+    year: meta.year,
+    poster: meta.poster,
+    genres: meta.genres,
+    overview: meta.overview,
+    imdbId: meta.imdbId,
+    tmdbScore: meta.tmdbScore,
+    ...(meta.type === 'tv'
+      ? {
+          seasonMeta: meta.seasonMeta,
+          seasonCount: meta.seasonCount,
+          episodeCount: meta.episodeCount,
+        }
+      : {}),
+  };
+}

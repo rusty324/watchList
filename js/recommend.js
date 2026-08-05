@@ -93,6 +93,29 @@ export function scoreCandidates(seedLists, affinity, exclude = new Set()) {
     .sort((a, b) => b.score - a.score);
 }
 
+/**
+ * Re-rank an already-ordered list (e.g. TMDB's popularity sort) by taste.
+ *
+ * Used by the Genres tab. Within a single genre the shared genre cancels out,
+ * so what this actually leans on is a candidate's *other* genres — a thriller
+ * that's also a comedy you dislike sinks below one that isn't. Same ±30%
+ * multiplier as scoreCandidates, so both surfaces rank consistently.
+ */
+export function rankByAffinity(items, affinity) {
+  return items
+    .map((item, index) => ({
+      item,
+      // Hyperbolic decay on the source position, so the baseline is independent
+      // of how many results came back. A linear `1 - index/items.length` would
+      // scale with list length and let position swamp taste on short lists.
+      score:
+        (1 / (1 + index / RANK_WINDOW)) *
+        (1 + AFFINITY_WEIGHT * candidateAffinity(item, affinity)),
+    }))
+    .sort((a, b) => b.score - a.score)
+    .map((entry) => entry.item);
+}
+
 /** Titles the user has already dealt with, in one lookup set. */
 export function excludeSet(items) {
   const set = new Set();

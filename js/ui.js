@@ -89,9 +89,12 @@ export function displayTitle(meta, stored) {
 
 export function metaLine(item) {
   if (item.type === 'tv') {
-    const seasons = item.seasonCount || 0;
     const parts = [item.year || '—'];
+    const seasons = item.seasonCount || 0;
+    // AniList entries know their episode count but not a season count, since
+    // it models cours as separate entries rather than seasons of one show.
     if (seasons) parts.push(`${seasons} season${seasons === 1 ? '' : 's'}`);
+    else if (item.episodes) parts.push(`${item.episodes} ep${item.episodes === 1 ? '' : 's'}`);
     return parts.join(' · ');
   }
   return item.year ? String(item.year) : '—';

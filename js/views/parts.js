@@ -85,26 +85,47 @@ export function scoresBlock(meta) {
   const node = h('div', { class: 'scores' });
 
   const cell = (cls, label) => {
+    const labelEl = h('div', { class: 's-label' }, label);
     const val = h('div', { class: 's-val' }, '—');
-    node.append(
-      h('div', { class: `score ${cls}` }, h('div', { class: 's-label' }, label), val)
-    );
-    return val;
+    const box = h('div', { class: `score ${cls}` }, labelEl, val);
+    node.append(box);
+    return { box, labelEl, val };
   };
 
-  const imdbVal = cell('imdb', 'IMDb');
-  const rtVal = cell('rt', 'Rotten Tom.');
-  const tmdbVal = cell('tmdb', 'TMDB');
+  const imdb = cell('imdb', 'IMDb');
+  const middle = cell('rt', 'Rotten Tom.');
+  const tmdb = cell('tmdb', 'TMDB');
+
+  // Anime carries an AniList score in place of Rotten Tomatoes, which is almost
+  // never scored for it. A swap rather than a fourth cell — four would squeeze
+  // the row below a readable width at 390px.
+  let anilistScore = null;
 
   const update = () => {
     const s = getItem(meta.type, meta.id)?.scores || {};
-    imdbVal.textContent = s.imdb != null ? s.imdb.toFixed(1) : '—';
-    rtVal.textContent = s.rt != null ? `${s.rt}%` : '—';
-    tmdbVal.textContent = meta.tmdbScore != null ? meta.tmdbScore.toFixed(1) : '—';
+    imdb.val.textContent = s.imdb != null ? s.imdb.toFixed(1) : '—';
+    tmdb.val.textContent = meta.tmdbScore != null ? meta.tmdbScore.toFixed(1) : '—';
+
+    if (anilistScore != null) {
+      middle.box.className = 'score anilist';
+      middle.labelEl.textContent = 'AniList';
+      middle.val.textContent = anilistScore.toFixed(1);
+    } else {
+      middle.box.className = 'score rt';
+      middle.labelEl.textContent = 'Rotten Tom.';
+      middle.val.textContent = s.rt != null ? `${s.rt}%` : '—';
+    }
   };
   update();
 
-  return { node, update };
+  return {
+    node,
+    update,
+    setAnilistScore(score) {
+      anilistScore = score;
+      update();
+    },
+  };
 }
 
 /* ---------- personal rating ---------- */

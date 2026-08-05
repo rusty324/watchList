@@ -72,6 +72,8 @@ async function request(path, params = {}) {
 
 export function posterUrl(path, size = 'w185') {
   if (!path) return null;
+  // AniList hands back absolute cover URLs; TMDB hands back bare paths.
+  if (/^https?:\/\//.test(path)) return path;
   if (isMock()) return null; // fixtures render placeholders, no network
   return `${IMG}/${size}${path}`;
 }
@@ -394,6 +396,28 @@ export async function personCredits(personId) {
     knownForDepartment: raw.known_for_department || '',
     credits: [...seen.values()],
   };
+}
+
+/**
+ * Popular titles in a genre.
+ *
+ * `vote_count.gte` keeps the long tail of near-unrated entries out; TMDB's
+ * popularity sort otherwise surfaces a lot of noise in the smaller genres.
+ */
+export async function discoverByGenre(type, genreId, { page = 1 } = {}) {
+  const [data, genres] = await Promise.all([
+    cached(`discover:${type}:${genreId}:${page}`, TTL.trending, () =>
+      request(`/discover/${type}`, {
+        with_genres: genreId,
+        sort_by: 'popularity.desc',
+        include_adult: 'false',
+        'vote_count.gte': type === 'movie' ? 200 : 50,
+        page,
+      })
+    ),
+    genreMap().catch(() => ({})),
+  ]);
+  return (data.results || []).map((r) => normalizeResult({ ...r, media_type: type }, genres));
 }
 
 export async function recommendationsFor(type, id) {

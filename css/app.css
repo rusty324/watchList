@@ -15,6 +15,7 @@
   --down: #d1483c;
   --imdb: #b8940a;
   --rt: #d1483c;
+  --anilist: #1f7fd4;
 
   --r-sm: 8px;
   --r-md: 12px;
@@ -45,6 +46,7 @@
     --down: #ff6b5e;
     --imdb: #f5c518;
     --rt: #fa5c48;
+    --anilist: #5cb3ff;
   }
 }
 
@@ -96,7 +98,7 @@ svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; 
   inset: auto 0 0 0;
   z-index: 40;
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, 1fr);
   height: calc(var(--tabbar-h) + var(--safe-b));
   padding-bottom: var(--safe-b);
   background: color-mix(in srgb, var(--bg) 82%, transparent);
@@ -203,6 +205,62 @@ svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; 
 }
 @media (min-width: 560px) { .grid { grid-template-columns: repeat(3, 1fr); } }
 @media (min-width: 820px) { .grid { grid-template-columns: repeat(4, 1fr); } }
+
+/* ---------- genre catalog ---------- */
+
+.genre-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+  margin-top: 4px;
+}
+@media (min-width: 560px) { .genre-grid { grid-template-columns: repeat(3, 1fr); } }
+
+/* Flat colour rather than artwork: the catalog then costs no requests and
+ * paints instantly, which matters as the tab's landing screen. */
+.genre-tile {
+  position: relative;
+  min-height: 76px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding: 12px;
+  border-radius: var(--r-md);
+  background:
+    linear-gradient(140deg,
+      hsl(var(--g-hue) 62% 46%) 0%,
+      hsl(calc(var(--g-hue) + 24) 58% 34%) 100%);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  overflow: hidden;
+  transition: transform 0.14s var(--ease);
+}
+@media (prefers-color-scheme: dark) {
+  .genre-tile {
+    background:
+      linear-gradient(140deg,
+        hsl(var(--g-hue) 48% 32%) 0%,
+        hsl(calc(var(--g-hue) + 24) 44% 21%) 100%);
+  }
+}
+.genre-tile:active { transform: scale(0.98); }
+.genre-tile .g-src {
+  margin-top: 2px;
+  font-size: 10px;
+  font-weight: 700;
+  font-style: normal;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.72;
+}
+
+.genre-head { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+.genre-head .icon-btn { text-decoration: none; }
+
+/* Pushes the seen/unseen toggle away from the type chips. */
+.chip-gap { flex: 0 0 12px; }
 
 .rail {
   display: grid;
@@ -374,6 +432,11 @@ svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; 
   background: var(--bg-sunk); color: var(--fg-dim);
   font-size: 11.5px; font-weight: 600;
 }
+/* AniList tags, tinted so they read as a different source to TMDB genres. */
+.hero .genres .g-tag {
+  background: color-mix(in srgb, var(--anilist) 16%, var(--bg-sunk));
+  color: color-mix(in srgb, var(--anilist) 70%, var(--fg));
+}
 
 .lang-toggle {
   display: inline-flex;
@@ -402,6 +465,7 @@ svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; 
 .score .s-val { margin-top: 3px; font-size: 17px; font-weight: 800; }
 .score.imdb .s-val { color: var(--imdb); }
 .score.rt .s-val { color: var(--rt); }
+.score.anilist .s-val { color: var(--anilist); }
 
 /* Three equal columns. The clear action lives in the caption row below rather
  * than inline, which buys each button the width to keep its label on one line. */

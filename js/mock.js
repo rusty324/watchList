@@ -90,7 +90,24 @@ const MOVIES = {
     vote_average: 8.5,
     popularity: 78.9,
     imdb_id: 'tt0245429',
-    genres: [{ id: 14, name: 'Fantasy' }, { id: 12, name: 'Adventure' }],
+    // Animated AND Japanese, so the Animation tile must exclude it and the
+    // Anime tile must be where it shows up.
+    genres: [{ id: 16, name: 'Animation' }, { id: 14, name: 'Fantasy' }, { id: 12, name: 'Adventure' }],
+  },
+  862: {
+    id: 862,
+    title: 'Toy Story',
+    original_title: 'Toy Story',
+    original_language: 'en',
+    release_date: '1995-11-22',
+    poster_path: '/uXDfjJbdP4ijW5hWSBrPrlKpxab.jpg',
+    overview:
+      'A cowboy doll is profoundly threatened when a new spaceman action figure supplants him as top toy.',
+    vote_average: 8.0,
+    popularity: 60.4,
+    imdb_id: 'tt0114709',
+    // Animated but not Japanese — the control case for the Animation tile.
+    genres: [{ id: 16, name: 'Animation' }, { id: 10751, name: 'Family' }, { id: 35, name: 'Comedy' }],
   },
   680: {
     id: 680,
@@ -237,6 +254,7 @@ const OMDB = {
   tt0093779: { imdbRating: '8.0', Ratings: [{ Source: 'Rotten Tomatoes', Value: '97%' }] },
   tt2278388: { imdbRating: '8.1', Ratings: [{ Source: 'Rotten Tomatoes', Value: '92%' }] },
   tt0245429: { imdbRating: '8.6', Ratings: [{ Source: 'Rotten Tomatoes', Value: '97%' }] },
+  tt0114709: { imdbRating: '8.3', Ratings: [{ Source: 'Rotten Tomatoes', Value: '100%' }] },
   tt0110912: { imdbRating: '8.9', Ratings: [{ Source: 'Rotten Tomatoes', Value: '92%' }] },
   // No Rotten Tomatoes entry — the realistic case for series, renders as "—".
   tt0903747: { imdbRating: '9.5', Ratings: [] },
@@ -288,6 +306,69 @@ const WATCH = {
     buy: [PROVIDERS.google],
   },
 };
+
+/* AniList fixtures for the Anime tile and detail-sheet enrichment. Spirited
+ * Away is deliberately present in both TMDB and AniList so the enrichment path
+ * (TMDB sheet + AniList score/studio/tags) can be exercised end to end. */
+const ANILIST = [
+  {
+    id: 129,
+    title: { romaji: 'Sen to Chihiro no Kamikakushi', english: 'Spirited Away', native: '千と千尋の神隠し' },
+    format: 'MOVIE',
+    episodes: 1,
+    seasonYear: 2001,
+    averageScore: 87,
+    genres: ['Adventure', 'Fantasy'],
+    description: 'A young girl wanders into a world of spirits and must work to free her parents.',
+    coverImage: { large: '' },
+    studios: { nodes: [{ name: 'Studio Ghibli' }] },
+    tags: [
+      { name: 'Iyashikei', rank: 78, isGeneralSpoiler: false },
+      { name: 'Coming of Age', rank: 71, isGeneralSpoiler: false },
+      { name: 'Shapeshifting', rank: 40, isGeneralSpoiler: false },
+      { name: 'Secret Identity', rank: 90, isGeneralSpoiler: true },
+    ],
+  },
+  {
+    id: 16498,
+    title: { romaji: 'Shingeki no Kyojin', english: 'Attack on Titan', native: '進撃の巨人' },
+    format: 'TV',
+    episodes: 25,
+    seasonYear: 2013,
+    averageScore: 85,
+    genres: ['Action', 'Drama', 'Fantasy'],
+    description: 'Humanity fights for survival against man-eating giants.',
+    coverImage: { large: '' },
+    studios: { nodes: [{ name: 'Wit Studio' }] },
+    tags: [{ name: 'Survival', rank: 88, isGeneralSpoiler: false }],
+  },
+  {
+    id: 21519,
+    title: { romaji: 'Kimi no Na wa.', english: 'Your Name.', native: '君の名は。' },
+    format: 'MOVIE',
+    episodes: 1,
+    seasonYear: 2016,
+    averageScore: 85,
+    genres: ['Romance', 'Drama'],
+    description: 'Two teenagers discover they are swapping bodies across time.',
+    coverImage: { large: '' },
+    studios: { nodes: [{ name: 'CoMix Wave Films' }] },
+    tags: [{ name: 'Time Skip', rank: 80, isGeneralSpoiler: false }],
+  },
+  {
+    id: 101922,
+    title: { romaji: 'Kimetsu no Yaiba', english: 'Demon Slayer', native: '鬼滅の刃' },
+    format: 'TV',
+    episodes: 26,
+    seasonYear: 2019,
+    averageScore: 83,
+    genres: ['Action', 'Fantasy'],
+    description: 'A boy becomes a demon slayer to avenge his family and cure his sister.',
+    coverImage: { large: '' },
+    studios: { nodes: [{ name: 'ufotable' }] },
+    tags: [{ name: 'Swordplay', rank: 85, isGeneralSpoiler: false }],
+  },
+];
 
 const REGIONS = [
   { iso_3166_1: 'US', english_name: 'United States of America' },
@@ -361,6 +442,16 @@ export function mockFetch(path, params = {}) {
     return delay({ results: Object.values(PROVIDERS) });
   }
 
+  let m = path.match(/^\/discover\/(movie|tv)$/);
+  if (m) {
+    const type = m[1];
+    const wanted = Number(params.with_genres);
+    const results = allResults()
+      .filter((r) => r.media_type === type)
+      .filter((r) => (r.genres || []).some((g) => g.id === wanted));
+    return delay({ results, total_results: results.length });
+  }
+
   if (path === '/search/multi') {
     const q = String(params.query || '').toLowerCase();
     const results = allResults().filter((r) =>
@@ -375,7 +466,7 @@ export function mockFetch(path, params = {}) {
     return delay({ results: allResults() });
   }
 
-  let m = path.match(/^\/(movie|tv)\/(\d+)\/recommendations$/);
+  m = path.match(/^\/(movie|tv)\/(\d+)\/recommendations$/);
   if (m) {
     const ids = RECS[`${m[1]}:${m[2]}`] || [];
     return delay({ results: ids.map(byId).filter(Boolean) });
@@ -432,4 +523,23 @@ export function mockFetch(path, params = {}) {
 
 export function mockOmdb(imdbId) {
   return OMDB[imdbId] || { Response: 'False', Error: 'Movie not found!' };
+}
+
+/** AniList is POSTed as GraphQL rather than going through mockFetch's routing. */
+export function mockAnilist(query, variables = {}) {
+  const delay = (value) => new Promise((r) => setTimeout(() => r(value), 60));
+
+  if (/Page\s*\(/.test(query)) {
+    const formats = variables.format_in || [];
+    const media = ANILIST.filter((m) => !formats.length || formats.includes(m.format));
+    return delay({ Page: { media } });
+  }
+
+  const term = String(variables.search || '').toLowerCase();
+  const hit = ANILIST.find((m) =>
+    [m.title.romaji, m.title.english, m.title.native]
+      .filter(Boolean)
+      .some((t) => t.toLowerCase().includes(term) || term.includes(t.toLowerCase()))
+  );
+  return delay({ Media: hit || null });
 }

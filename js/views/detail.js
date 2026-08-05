@@ -22,6 +22,7 @@ import {
 } from '../store.js';
 import { movieDetail, tvDetail, seasonDetail, personCredits, posterUrl } from '../tmdb.js';
 import { fetchScores } from '../omdb.js';
+import { enrich, resolveToTmdb } from '../anilist.js';
 import {
   heroBlock,
   scoresBlock,
@@ -36,8 +37,37 @@ import {
 /** Entry point for anything tappable in a grid, rail, or list. */
 export function openItem(item) {
   if (item.type === 'person') return openPerson(item.id, item.title);
+  // AniList entries carry no TMDB id, so resolve one now — on tap rather than
+  // while rendering a grid, which would cost a search per tile.
+  if (item.source === 'anilist') return openAnime(item);
   if (item.type === 'tv') return openTv(item.id, item);
   return openMovie(item.id, item);
+}
+
+function openAnime(entry) {
+  return openSheet({
+    title: entry.title,
+    render: async (api) => {
+      api.body.append(loading());
+      const match = await resolveToTmdb(entry);
+      if (!match) {
+        fill(api.body,
+          emptyState({
+            iconName: 'film',
+            title: 'Not on TMDB',
+            body: `“${entry.title}” has no TMDB entry, so it can't be tracked here yet.`,
+          })
+        );
+        return;
+      }
+      // Swap this placeholder sheet for the real one rather than stacking two.
+      api.close();
+      setTimeout(() => {
+        if (match.type === 'tv') openTv(match.id, entry);
+        else openMovie(match.id, entry);
+      }, 0);
+    },
+  });
 }
 
 function loading() {
@@ -103,8 +133,42 @@ export function openMovie(id, hint) {
 
       // OMDb is quota-limited, so it only runs here — on an explicit open.
       fetchScores('movie', id, meta.imdbId).then(() => scores.update());
+      applyAnimeEnrichment(meta, scores, api.body);
     },
   });
+}
+
+/**
+ * Fold AniList data into a sheet already rendered from TMDB. Runs in the
+ * background and does nothing at all for non-anime, so the sheet never waits on
+ * it and nothing shifts for the vast majority of titles.
+ */
+async function applyAnimeEnrichment(meta, scores, body) {
+  const anime = await enrich(meta);
+  if (!anime) return;
+
+  if (anime.anilistScore != null) scores.setAnilistScore(anime.anilistScore);
+
+  const facts = body.querySelector('.hero .facts');
+  const extra = [
+    anime.studio || null,
+    // Episode counts only mean something for series; AniList reports 1 for films.
+    anime.type === 'tv' && anime.episodes
+      ? `${anime.episodes} episode${anime.episodes === 1 ? '' : 's'}`
+      : null,
+  ].filter(Boolean);
+  if (facts && extra.length) facts.textContent += ` · ${extra.join(' · ')}`;
+
+  // AniList tags ("Isekai", "Slice of Life") are far more useful for anime than
+  // TMDB's single flat "Animation" genre.
+  const genreRow = body.querySelector('.hero .genres');
+  if (genreRow && anime.tags.length) {
+    const existing = new Set([...genreRow.children].map((c) => c.textContent.toLowerCase()));
+    for (const tag of anime.tags) {
+      if (existing.has(tag.toLowerCase())) continue;
+      genreRow.append(h('span', { class: 'g-tag' }, tag));
+    }
+  }
 }
 
 /* ---------- tv ---------- */
@@ -197,6 +261,7 @@ export function openTv(id, hint) {
       );
 
       fetchScores('tv', id, meta.imdbId).then(() => scores.update());
+      applyAnimeEnrichment(meta, scores, api.body);
 
       let currentEpisodes = [];
 

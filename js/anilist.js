@@ -67,6 +67,14 @@ async function gql(query, variables) {
   return body.data;
 }
 
+/**
+ * One uncached round trip, for the Settings health check. Uncached on purpose:
+ * `cached()` would answer from IndexedDB and mask an outage.
+ */
+export function ping() {
+  return gql('{ Media(id: 1, type: ANIME) { id } }', {});
+}
+
 /* ---------- normalization ---------- */
 
 /** AniList's MediaFormat values, mapped onto the app's movie/tv split. */

@@ -50,6 +50,7 @@ const sync = await import('../js/sync.js');
 const omdb = await import('../js/omdb.js');
 const genres = await import('../js/genres.js');
 const anilist = await import('../js/anilist.js');
+const diag = await import('../js/diagnostics.js');
 
 function resetStore() {
   for (const key of Object.keys(store.state.items)) delete store.state.items[key];
@@ -706,6 +707,74 @@ test('missing scores parse to null rather than a fake number', () => {
   assert.deepEqual(omdb.parseOmdb({ imdbRating: 'N/A', Ratings: [] }), { imdb: null, rt: null });
   assert.deepEqual(omdb.parseOmdb({ Response: 'False' }), { imdb: null, rt: null });
   assert.equal(omdb.parseRotten(undefined), null);
+});
+
+/* ---------- diagnostics ---------- */
+
+test('a rejected TMDB key and an unreachable TMDB are different problems', () => {
+  assert.equal(diag.classifyTmdb({ valid: true }).status, 'ok');
+
+  const rejected = diag.classifyTmdb({ error: { status: 401, message: 'nope' } });
+  assert.equal(rejected.status, 'error');
+  assert.match(rejected.detail, /key/i);
+
+  // A network failure must not read as "your key is wrong" — different fix.
+  const offline = diag.classifyTmdb({ error: { status: 0, message: 'Network error reaching TMDB.' } });
+  assert.equal(offline.status, 'error');
+  assert.doesNotMatch(offline.detail, /key/i);
+
+  assert.equal(diag.classifyTmdb({ valid: false }).status, 'error');
+});
+
+test('OMDb distinguishes a bad key from any other refusal', () => {
+  const badKey = diag.classifyOmdb({ payload: { Response: 'False', Error: 'Invalid API key!' } });
+  assert.equal(badKey.status, 'error');
+  assert.match(badKey.detail, /key/i);
+
+  const other = diag.classifyOmdb({ payload: { Response: 'False', Error: 'Movie not found!' } });
+  assert.equal(other.status, 'error');
+  assert.equal(other.detail, 'Movie not found!');
+
+  const ok = diag.classifyOmdb({ payload: { Response: 'True', imdbRating: '9.3' } });
+  assert.equal(ok.status, 'ok');
+  // Exhausted quota looks like an outage from outside, so surface the count.
+  assert.match(ok.detail, /lookups left today/);
+});
+
+test('an AniList error carried inside a 200 response still counts as failure', () => {
+  // GraphQL reports failures in-band, so HTTP status alone would say "fine".
+  const inBand = diag.classifyAnilist({ data: { errors: [{ message: 'Too Many Requests' }] } });
+  assert.equal(inBand.status, 'error');
+  assert.equal(inBand.detail, 'Too Many Requests');
+
+  assert.equal(diag.classifyAnilist({ data: { Media: { id: 1 } } }).status, 'ok');
+  assert.equal(diag.classifyAnilist({ data: {} }).status, 'error');
+  assert.equal(diag.classifyAnilist({ error: new Error('offline') }).status, 'error');
+});
+
+test('a missing optional key is skipped, not reported as broken', async () => {
+  resetStore();
+  store.secrets.tmdbKey = '';
+  store.secrets.omdbKey = '';
+
+  const results = new Map();
+  await diag.runChecks((id, result) => results.set(id, result));
+
+  // No key means "not configured", which is not the same as "failing".
+  assert.equal(results.get('omdb').status, 'skipped');
+  assert.match(results.get('omdb').detail, /optional/i);
+  assert.equal(results.get('tmdb').status, 'skipped');
+  // AniList needs no key, so it is never skipped for want of one.
+  assert.notEqual(results.get('anilist').status, 'skipped');
+});
+
+test('every service is described well enough to act on', () => {
+  const ids = diag.CHECKS.map((c) => c.id);
+  assert.deepEqual(ids, ['tmdb', 'omdb', 'anilist']);
+  for (const check of diag.CHECKS) {
+    assert.ok(check.label && check.purpose, `${check.id} is missing a label or purpose`);
+    assert.equal(typeof check.run, 'function');
+  }
 });
 
 /* ---------- export safety ---------- */

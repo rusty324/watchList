@@ -17,6 +17,7 @@ import { checkboxAction } from './parts.js';
 import { validateKey, watchRegions, providersForRegion, resolveRegion } from '../tmdb.js';
 import { cacheClear } from '../idb.js';
 import { quota, quotaRemaining } from '../omdb.js';
+import { CHECKS, runChecks } from '../diagnostics.js';
 import * as sync from '../sync.js';
 import { isMock } from '../mock.js';
 
@@ -260,6 +261,66 @@ export function openSettings() {
         (on) => setSetting('hideDisliked', on)
       );
 
+      /* ---- diagnostics ---- */
+
+      const diagRows = new Map();
+      const diagList = h(
+        'div',
+        { class: 'diag' },
+        CHECKS.map((check) => {
+          const dot = h('span', { class: 'sync-dot' });
+          const detail = h('span', { class: 'd-detail' }, 'Not checked yet.');
+          const timing = h('span', { class: 'd-ms' }, '');
+          diagRows.set(check.id, { dot, detail, timing });
+          return h(
+            'div',
+            { class: 'diag-row', dataset: { check: check.id } },
+            h(
+              'div',
+              { class: 'd-head' },
+              dot,
+              h('strong', {}, check.label),
+              check.optional ? h('span', { class: 'd-opt' }, 'optional') : null,
+              timing
+            ),
+            h('div', { class: 'd-purpose' }, check.purpose),
+            detail
+          );
+        })
+      );
+
+      const runBtn = h(
+        'button',
+        {
+          type: 'button',
+          class: 'btn secondary',
+          onclick: async () => {
+            runBtn.disabled = true;
+            runBtn.textContent = 'Checking…';
+            for (const { dot, detail, timing } of diagRows.values()) {
+              dot.className = 'sync-dot busy';
+              detail.textContent = 'Checking…';
+              timing.textContent = '';
+            }
+            try {
+              await runChecks((id, result) => {
+                const row = diagRows.get(id);
+                if (!row) return;
+                row.dot.className = `sync-dot ${
+                  result.status === 'ok' ? 'ok' : result.status === 'skipped' ? '' : 'err'
+                }`;
+                row.detail.textContent = result.detail;
+                row.timing.textContent = result.ms == null ? '' : `${result.ms} ms`;
+              });
+            } finally {
+              runBtn.disabled = false;
+              runBtn.textContent = 'Check connections';
+            }
+          },
+        },
+        'Check connections'
+      );
+
       /* ---- where to watch ---- */
 
       const regionSelect = h(
@@ -371,6 +432,13 @@ export function openSettings() {
           `Optional. Adds IMDb and Rotten Tomatoes scores. Free at <a href="https://www.omdbapi.com/apikey.aspx" target="_blank" rel="noopener">omdbapi.com</a>. Used ${q.used} of 1000 today (${quotaRemaining()} left).`
         ),
         saveOmdb,
+
+        h('h3', { class: 'section-title' }, 'Diagnostics'),
+        h('p', { class: 'hint', style: 'margin:0 0 10px' },
+          'If something stops loading, start here — it tells you which service is at fault. ' +
+          'The OMDb check spends one of today’s 1000 lookups, so it only runs when you tap.'),
+        diagList,
+        runBtn,
 
         h('h3', { class: 'section-title' }, 'Display'),
         field('Default title language for foreign titles', langSelect,

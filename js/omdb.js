@@ -124,6 +124,24 @@ export async function fetchScores(type, id, imdbId, { force = false } = {}) {
 }
 
 /**
+ * One uncached round trip, for the Settings health check.
+ *
+ * Deliberately does not go through `fetchScores`: that reads the item cache and
+ * would happily report a dead service as healthy. It does go through the quota
+ * counter, because it really does spend one of the day's 1000 lookups.
+ */
+export async function ping() {
+  if (isMock()) return { Response: 'True', imdbRating: '9.3' };
+  const url = new URL(BASE);
+  url.searchParams.set('i', 'tt0111161'); // The Shawshank Redemption
+  url.searchParams.set('apikey', secrets.omdbKey);
+  countRequest();
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`OMDb returned ${res.status}`);
+  return res.json();
+}
+
+/**
  * Backfill scores for list items that never got them (added before a key was
  * entered, or imported from a Gist). Sequential and capped so it can't burn
  * the daily quota in one sweep.

@@ -460,6 +460,28 @@ await page.waitForTimeout(600);
 /* ---- 13. marking a service as mine floats it to the front ---- */
 await page.click('.icon-btn[aria-label="Settings"]');
 await page.waitForTimeout(800);
+
+/* the API health check */
+const diagRows = await page.locator('.diag-row').count();
+console.log('diagnostic rows ->', diagRows);
+if (diagRows !== 3) problems.push(`expected 3 service checks, found ${diagRows}`);
+if (!/Not checked yet/.test(await page.textContent('.diag-row .d-detail'))) {
+  problems.push('checks ran on open — they should cost a deliberate tap');
+}
+await page.locator('.sheet-body button', { hasText: 'Check connections' }).click();
+await page.waitForTimeout(900);
+const diagStates = await page.locator('.diag-row').evaluateAll((rows) =>
+  rows.map((r) => `${r.dataset.check}:${r.querySelector('.sync-dot').className.replace('sync-dot', '').trim() || 'none'}`)
+);
+console.log('diagnostics ->', diagStates.join(' '));
+if (diagStates.some((s) => s.includes('err'))) {
+  problems.push(`a health check reported failure in fixture mode: ${diagStates.join(' ')}`);
+}
+if (!diagStates.every((s) => s.endsWith(':ok'))) {
+  problems.push(`checks did not all resolve: ${diagStates.join(' ')}`);
+}
+await shot('27a-settings-diagnostics');
+
 await page.fill('.sheet-body input[placeholder="Filter services"]', 'hulu');
 await page.waitForTimeout(300);
 await page.locator('.chips-wrap .chip', { hasText: 'Hulu' }).click();

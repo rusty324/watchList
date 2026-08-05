@@ -3,6 +3,7 @@
 import { subscribe } from './store.js';
 import { sheetDepth, closeAllSheets } from './ui.js';
 import { renderBrowse, invalidateRecommendations } from './views/browse.js';
+import { renderGenres } from './views/genres.js';
 import { renderLists } from './views/lists.js';
 import { consumeSetupLink, openSettings } from './views/settings.js';
 import { hasTmdbKey } from './tmdb.js';
@@ -13,25 +14,35 @@ const tabs = [...document.querySelectorAll('.tab')];
 
 const ROUTES = {
   browse: renderBrowse,
+  genres: renderGenres,
   lists: renderLists,
 };
 
 let current = 'browse';
 let dirty = false;
 
-function routeName() {
-  const hash = location.hash.replace(/^#\/?/, '').split('?')[0];
-  return ROUTES[hash] ? hash : 'browse';
+/**
+ * `#/genres/horror` -> { name: 'genres', sub: 'horror' }. The selected genre
+ * lives in the hash so it becomes a real history entry, which is what makes the
+ * back gesture return to the genre grid rather than leaving the tab.
+ */
+function parseRoute() {
+  const [name, sub] = location.hash.replace(/^#\/?/, '').split('?')[0].split('/');
+  return { name: ROUTES[name] ? name : 'browse', sub: sub || null };
 }
 
 function render() {
   dirty = false;
-  current = routeName();
+  const route = parseRoute();
+  const tabChanged = route.name !== current;
+  current = route.name;
   for (const tab of tabs) {
     tab.setAttribute('aria-selected', String(tab.dataset.tab === current));
   }
-  ROUTES[current](view);
-  view.scrollTop = 0;
+  ROUTES[current](view, route.sub);
+  // Moving within a tab (picking a genre) shouldn't fight the browser over
+  // scroll position the way switching tabs should reset it.
+  if (tabChanged) view.scrollTop = 0;
 }
 
 addEventListener('hashchange', () => {

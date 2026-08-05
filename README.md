@@ -5,9 +5,13 @@ get to, and what to watch next. It runs entirely in the browser as a static
 site on GitHub Pages — no server, no accounts, no build step.
 
 - **Browse** — search TMDB, or get recommendations built from your own ratings.
+- **Genres** — pick a genre, get picks in it you haven't seen, filter to films or
+  TV. Anime is its own tile, sourced from AniList.
 - **Lists** — everything you've tracked, filtered and sorted seven ways.
 - **Three verdicts** — *Liked it*, *One and done* ("glad I saw it, but never
   again"), and *Not for me*, which you can hide from view entirely.
+- **Where to watch** — what's streaming, free, rentable or buyable in your
+  country, with your own subscriptions marked.
 - **Movies** — year, genres, IMDb / Rotten Tomatoes / TMDB scores, a synopsis,
   cast you can tap through to a sortable filmography, and an English ↔ original
   title toggle for foreign films.
@@ -122,6 +126,59 @@ filed as either a lie or a thumbs up. Tapping the active rating clears it.
 your Lists and out of Trending. Searching by name still finds them, and the
 "Not for me" filter chip on the Lists tab always shows them — so a rating you
 hide is never a rating you can't undo.
+
+### Genres
+
+The middle tab opens on a grid of 21 genres. Pick one and you get popular titles
+in it, minus anything you've already watched, rated or listed, re-ranked by your
+taste — within a single genre the shared genre cancels out, so what actually
+moves the order is a candidate's *other* genres. Chips filter to Movies or TV,
+and **Show all** drops the exclusion when you'd rather browse a genre's canon
+than get new-to-you picks.
+
+Genres that TMDB only has for one medium (Horror is film-only, Reality is
+TV-only) don't offer a filter that could only ever come back empty.
+
+### Anime, via AniList
+
+**Anime is its own tile**, separate from Animation, and comes from
+[AniList](https://anilist.co) rather than TMDB — free, no API key, and much
+better at anime than TMDB, which lumps cours into arbitrary "seasons" and files
+Ghibli next to Pixar. Animation covers everything else animated.
+
+Open any anime and the sheet gains AniList data on top of TMDB's: the **AniList
+score replaces the Rotten Tomatoes cell** (RT essentially never scores anime),
+the studio joins the facts line, and AniList tags like *Iyashikei* appear beside
+the TMDB genres, tinted blue to show they're from a different source.
+
+TMDB ids stay the app's primary key — AniList is a supplement, never a second
+identity, or watch state, watchlists, providers and sync would each split across
+two id spaces. An AniList tile resolves to its TMDB entry when you tap it, not
+while the grid renders, so a screen of anime costs one request rather than forty.
+
+**AniDB was considered and rejected**: it sends no CORS headers, needs a
+registered client id on every request, and allows one request per two seconds
+with day-long bans for refetching. All of that assumes a server, and this app
+deliberately doesn't have one.
+
+### Where to watch
+
+Each detail sheet shows a **Stream / Free / Rent / Buy** box for your country.
+The data is JustWatch's, delivered through TMDB, and it rides along on the
+request the sheet already makes — so it costs no extra API calls and no extra
+key.
+
+Set your country under **Settings → Where to watch**; it's guessed from your
+device's locale until you change it. Tap the services you subscribe to under
+**My services** and they sort to the front of the Stream row with a check.
+Nothing is ever hidden — you still want to see that something left your service
+and is now rentable elsewhere.
+
+Three limits come from the data itself: there are **no prices**, availability is
+**per country**, and TMDB provides a single JustWatch link per title rather than
+per-provider deep links — so tapping *Netflix* opens the availability page, not
+Netflix. That link is also how JustWatch gets credited for the data, which their
+terms require.
 
 ### A note on specials
 

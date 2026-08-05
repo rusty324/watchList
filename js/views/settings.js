@@ -14,7 +14,8 @@ import {
   replaceData,
 } from '../store.js';
 import { checkboxAction } from './parts.js';
-import { validateKey } from '../tmdb.js';
+import { validateKey, watchRegions, providersForRegion, resolveRegion } from '../tmdb.js';
+import { cacheClear } from '../idb.js';
 import { quota, quotaRemaining } from '../omdb.js';
 import * as sync from '../sync.js';
 import { isMock } from '../mock.js';
@@ -259,6 +260,90 @@ export function openSettings() {
         (on) => setSetting('hideDisliked', on)
       );
 
+      /* ---- where to watch ---- */
+
+      const regionSelect = h(
+        'select',
+        {
+          class: 'select',
+          'aria-label': 'Availability region',
+          onchange: () => {
+            setSetting('region', regionSelect.value);
+            // Availability is baked into the cached detail payloads, so they
+            // have to go for a region change to take effect.
+            cacheClear();
+            loadProviderChips();
+          },
+        },
+        h('option', { value: '', selected: !state.settings.region }, `Auto — ${resolveRegion()}`)
+      );
+
+      watchRegions()
+        .then((regions) => {
+          for (const r of regions) {
+            regionSelect.append(
+              h('option', { value: r.code, selected: state.settings.region === r.code },
+                `${r.name} (${r.code})`)
+            );
+          }
+        })
+        .catch(() => {
+          // No key yet, or offline: the Auto option alone still works.
+        });
+
+      const providerFilter = h('input', {
+        type: 'search',
+        placeholder: 'Filter services',
+        autocapitalize: 'none',
+        'aria-label': 'Filter services',
+      });
+      const providerChips = h('div', { class: 'chips chips-wrap' });
+
+      let allProviders = [];
+
+      function paintProviderChips() {
+        const q = providerFilter.value.trim().toLowerCase();
+        const mine = new Set(state.settings.myProviders || []);
+        const shown = allProviders
+          .filter((p) => !q || p.name.toLowerCase().includes(q))
+          .slice(0, 40);
+
+        fill(providerChips,
+          shown.length
+            ? shown.map((p) =>
+                h(
+                  'button',
+                  {
+                    type: 'button',
+                    class: 'chip',
+                    'aria-pressed': String(mine.has(p.id)),
+                    onclick: (event) => {
+                      const next = new Set(state.settings.myProviders || []);
+                      if (next.has(p.id)) next.delete(p.id);
+                      else next.add(p.id);
+                      setSetting('myProviders', [...next]);
+                      event.currentTarget.setAttribute('aria-pressed', String(next.has(p.id)));
+                    },
+                  },
+                  p.name
+                )
+              )
+            : h('p', { class: 'hint' }, allProviders.length ? 'No services match.' : 'Add your TMDB key to load services.')
+        );
+      }
+
+      providerFilter.addEventListener('input', paintProviderChips);
+
+      function loadProviderChips() {
+        providersForRegion(resolveRegion())
+          .then((list) => {
+            allProviders = list;
+            paintProviderChips();
+          })
+          .catch(() => paintProviderChips());
+      }
+      loadProviderChips();
+
       const itemCount = Object.keys(state.items).length;
 
       fill(body, 
@@ -295,6 +380,15 @@ export function openSettings() {
           'Keeps titles you rated “Not for me” out of your Lists and out of Trending. ' +
           'Searching by name still finds them, and the “Not for me” filter on the Lists tab ' +
           'always shows them, so you can always change your mind.'),
+
+        h('h3', { class: 'section-title' }, 'Where to watch'),
+        field('Region', regionSelect,
+          'Streaming, rental and purchase options differ by country. Availability data comes from JustWatch, via TMDB.'),
+        h('label', { class: 'field-label' }, 'My services'),
+        h('p', { class: 'hint', style: 'margin:0 0 8px' },
+          'Tap the ones you subscribe to. They sort to the front of the Stream row on each title, marked with a check. Nothing gets hidden either way.'),
+        providerFilter,
+        providerChips,
 
         h('h3', { class: 'section-title' }, 'Sync'),
         h(

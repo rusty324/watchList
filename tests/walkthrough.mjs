@@ -90,6 +90,39 @@ for (const b of btnBoxes) {
   }
 }
 
+/* ---- where to watch ---- */
+const rowNames = async (row) =>
+  page.locator(`.prov-row[data-row="${row}"] .p-name`).allTextContents();
+
+const streamRow = await rowNames('stream');
+const freeRow = await rowNames('free');
+console.log('stream ->', streamRow.join(', '));
+console.log('free ->', freeRow.join(', '));
+console.log('rent ->', (await rowNames('rent')).join(', '));
+console.log('buy ->', (await rowNames('buy')).join(', '));
+
+// sorted by TMDB's display_priority, not fixture order
+if (streamRow.join('|') !== 'Netflix|Max|Hulu') {
+  problems.push(`stream row wrong or unsorted: ${streamRow.join('|')}`);
+}
+// Tubi is in both `free` and `ads` upstream and must appear once
+if (freeRow.filter((n) => n === 'Tubi TV').length !== 1) {
+  problems.push(`Tubi listed ${freeRow.filter((n) => n === 'Tubi TV').length} times in the free row`);
+}
+// all four chip strips must start at the same x, or the box looks ragged
+const stripX = await Promise.all(
+  (await page.locator('.prov-row .p-strip').all()).map(async (s) => Math.round((await s.boundingBox()).x))
+);
+console.log('strip start positions ->', stripX.join(', '));
+if (new Set(stripX).size !== 1) {
+  problems.push(`provider rows are not aligned: strips start at ${stripX.join(', ')}`);
+}
+
+const credit = await page.textContent('.prov-note');
+console.log('credit ->', credit);
+if (!/JustWatch/.test(credit)) problems.push('the JustWatch attribution line is missing');
+await shot('04a-movie-where-to-watch');
+
 // the middle rating, and the caption that carries its meaning
 await page.click('.rating-btn.once');
 await page.waitForTimeout(250);
@@ -146,7 +179,30 @@ await page.waitForTimeout(700);
 const toggles = await page.locator('.lang-toggle').count();
 console.log('princess bride lang toggles ->', toggles);
 if (toggles !== 0) problems.push('The Princess Bride wrongly offers a language toggle');
+
+// rent/buy only: empty rows must not render at all
+if (await page.locator('.prov-row[data-row="stream"]').count()) {
+  problems.push('a Stream row rendered for a title with nothing to stream');
+}
+if (!(await page.locator('.prov-row[data-row="rent"]').count())) {
+  problems.push('the Rent row is missing for a rent-only title');
+}
 await shot('08-movie-english-no-toggle');
+await page.goBack();
+await page.waitForTimeout(500);
+
+/* ---- a title with no availability at all ---- */
+await page.fill('input[type="search"]', 'spirited');
+await page.waitForTimeout(700);
+await page.click('.grid .tile');
+await page.waitForTimeout(800);
+const emptyNote = await page.textContent('.prov-empty');
+console.log('no-availability note ->', emptyNote);
+if (!/US/.test(emptyNote)) problems.push('the empty availability note does not name the region');
+if (await page.locator('.prov-row').count()) {
+  problems.push('provider rows rendered for a title with no availability');
+}
+await shot('08a-movie-no-availability');
 await page.goBack();
 await page.waitForTimeout(500);
 
@@ -288,6 +344,148 @@ if (!(await page.locator('.grid .tile .badge.once').count())) {
 }
 await shot('21-lists-one-and-done');
 
+/* ---- 11. genres tab ---- */
+const tabLabels = await page.locator('.tab span').allTextContents();
+console.log('tabs ->', tabLabels.join(' | '));
+if (tabLabels.join('|') !== 'Browse|Genres|Lists') {
+  problems.push(`tabs wrong or out of order: ${tabLabels.join('|')}`);
+}
+
+await page.click('.tab[data-tab="genres"]');
+await page.waitForTimeout(700);
+const genreNames = await page.locator('.genre-tile span').allTextContents();
+console.log('genre count ->', genreNames.length);
+if (!genreNames.includes('Anime') || !genreNames.includes('Animation')) {
+  problems.push('Anime and Animation are not both listed as genres');
+}
+await shot('22-genres-catalog');
+
+// Animation must exclude Japanese-origin titles; Spirited Away is the trap
+await page.locator('.genre-tile', { hasText: 'Animation' }).first().click();
+await page.waitForTimeout(1200);
+const animationTitles = await page.locator('.grid .tile .t-name').allTextContents();
+console.log('animation ->', animationTitles.join(', '));
+if (animationTitles.includes('Spirited Away')) {
+  problems.push('an anime leaked into the Animation genre');
+}
+if (!animationTitles.includes('Toy Story')) {
+  problems.push('non-Japanese animation is missing from the Animation genre');
+}
+await shot('23-genres-animation');
+
+// back must return to the catalog, not leave the tab
+await page.goBack();
+await page.waitForTimeout(700);
+if (!(await page.locator('.genre-tile').count())) {
+  problems.push('back from a genre did not return to the genre grid');
+}
+
+/* the Anime tile is AniList-sourced */
+await page.locator('.genre-tile', { hasText: 'Anime' }).first().click();
+await page.waitForTimeout(1200);
+const animeTitles = await page.locator('.grid .tile .t-name').allTextContents();
+console.log('anime ->', animeTitles.join(', '));
+if (!animeTitles.includes('Attack on Titan')) {
+  problems.push(`AniList-sourced anime results missing: ${animeTitles.join('|')}`);
+}
+await shot('24-genres-anime');
+
+// the movie/TV filter narrows to one format
+await page.locator('.chips .chip', { hasText: 'Movies' }).first().click();
+await page.waitForTimeout(1000);
+const animeMovies = await page.locator('.grid .tile .t-name').allTextContents();
+console.log('anime films ->', animeMovies.join(', '));
+if (animeMovies.includes('Attack on Titan')) {
+  problems.push('a TV series survived the Movies filter');
+}
+if (!animeMovies.includes('Your Name.')) {
+  problems.push('anime films missing under the Movies filter');
+}
+
+// "Show all" must reveal something the default hid: Spirited Away is rated
+await page.locator('.chips .chip', { hasText: 'All' }).first().click();
+await page.waitForTimeout(1000);
+const beforeShowAll = await page.locator('.grid .tile .t-name').allTextContents();
+await page.locator('.chips .chip', { hasText: 'Show all' }).click();
+await page.waitForTimeout(1000);
+const afterShowAll = await page.locator('.grid .tile .t-name').allTextContents();
+console.log('anime new-to-me ->', beforeShowAll.length, 'show-all ->', afterShowAll.length);
+if (beforeShowAll.includes('Spirited Away')) {
+  problems.push('an already-rated title showed under "new to me"');
+}
+if (!afterShowAll.includes('Spirited Away')) {
+  problems.push('"Show all" did not reveal the already-rated title');
+}
+await shot('25-genres-anime-show-all');
+
+/* ---- 12. AniList enrichment on an anime sheet ---- */
+await page.click('.tab[data-tab="browse"]');
+await page.waitForTimeout(600);
+await page.fill('input[type="search"]', 'spirited');
+await page.waitForTimeout(800);
+await page.click('.grid .tile');
+await page.waitForTimeout(1400);
+const scoreLabels = await page.locator('.scores .s-label').allTextContents();
+const scoreValues = await page.locator('.scores .s-val').allTextContents();
+console.log('anime scores ->', scoreLabels.map((l, i) => `${l}=${scoreValues[i]}`).join(' '));
+if (!scoreLabels.includes('AniList')) {
+  problems.push('the AniList score did not replace Rotten Tomatoes on an anime sheet');
+}
+const heroFacts = await page.textContent('.hero .facts');
+console.log('anime facts ->', heroFacts);
+if (!/Ghibli/.test(heroFacts)) problems.push('the AniList studio is missing from the facts line');
+if (!(await page.locator('.hero .genres .g-tag').count())) {
+  problems.push('AniList tags were not merged into the genre chips');
+}
+await shot('26-anime-enriched');
+
+// a non-anime sheet must be untouched by all of this
+await page.goBack();
+await page.waitForTimeout(600);
+await page.fill('input[type="search"]', 'princess');
+await page.waitForTimeout(800);
+await page.click('.grid .tile');
+await page.waitForTimeout(1200);
+const plainLabels = await page.locator('.scores .s-label').allTextContents();
+console.log('non-anime scores ->', plainLabels.join(', '));
+if (plainLabels.includes('AniList')) {
+  problems.push('a non-anime title was given an AniList score');
+}
+if (await page.locator('.hero .genres .g-tag').count()) {
+  problems.push('a non-anime title was given AniList tags');
+}
+await page.goBack();
+await page.waitForTimeout(600);
+
+/* ---- 13. marking a service as mine floats it to the front ---- */
+await page.click('.icon-btn[aria-label="Settings"]');
+await page.waitForTimeout(800);
+await page.fill('.sheet-body input[placeholder="Filter services"]', 'hulu');
+await page.waitForTimeout(300);
+await page.locator('.chips-wrap .chip', { hasText: 'Hulu' }).click();
+await page.waitForTimeout(300);
+await shot('27-settings-where-to-watch');
+await page.goBack();
+await page.waitForTimeout(600);
+
+await page.click('.tab[data-tab="browse"]');
+await page.waitForTimeout(600);
+await page.fill('input[type="search"]', 'para');
+await page.waitForTimeout(800);
+await page.click('.grid .tile');
+await page.waitForTimeout(900);
+const streamAfter = await page.locator('.prov-row[data-row="stream"] .p-name').allTextContents();
+console.log('stream row with Hulu subscribed ->', streamAfter.join(', '));
+if (streamAfter[0] !== 'Hulu') {
+  problems.push(`a subscribed service did not sort first: ${streamAfter.join('|')}`);
+}
+if (!(await page.locator('.prov-chip.mine').count())) {
+  problems.push('the subscribed-service marker is missing');
+}
+await shot('28-movie-my-service-first');
+await page.goBack();
+await page.waitForTimeout(500);
+
 /* ---- 11. light mode pass ---- */
 await context.close();
 const light = await browser.newContext({
@@ -301,14 +499,14 @@ const lp = await light.newPage();
 lp.on('pageerror', (e) => problems.push(`pageerror(light): ${e.message}`));
 await lp.goto(BASE, { waitUntil: 'networkidle' });
 await lp.waitForTimeout(900);
-await lp.screenshot({ path: `${OUT}/22-light-browse.png` });
+await lp.screenshot({ path: `${OUT}/29-light-browse.png` });
 await lp.fill('input[type="search"]', 'squid');
 await lp.waitForTimeout(700);
 await lp.click('.grid .tile');
 await lp.waitForTimeout(900);
 await lp.click('.rating-btn.once');
 await lp.waitForTimeout(250);
-await lp.screenshot({ path: `${OUT}/23-light-tv.png` });
+await lp.screenshot({ path: `${OUT}/30-light-tv.png` });
 
 await browser.close();
 

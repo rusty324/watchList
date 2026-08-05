@@ -90,7 +90,24 @@ const MOVIES = {
     vote_average: 8.5,
     popularity: 78.9,
     imdb_id: 'tt0245429',
-    genres: [{ id: 14, name: 'Fantasy' }, { id: 12, name: 'Adventure' }],
+    // Animated AND Japanese, so the Animation tile must exclude it and the
+    // Anime tile must be where it shows up.
+    genres: [{ id: 16, name: 'Animation' }, { id: 14, name: 'Fantasy' }, { id: 12, name: 'Adventure' }],
+  },
+  862: {
+    id: 862,
+    title: 'Toy Story',
+    original_title: 'Toy Story',
+    original_language: 'en',
+    release_date: '1995-11-22',
+    poster_path: '/uXDfjJbdP4ijW5hWSBrPrlKpxab.jpg',
+    overview:
+      'A cowboy doll is profoundly threatened when a new spaceman action figure supplants him as top toy.',
+    vote_average: 8.0,
+    popularity: 60.4,
+    imdb_id: 'tt0114709',
+    // Animated but not Japanese — the control case for the Animation tile.
+    genres: [{ id: 16, name: 'Animation' }, { id: 10751, name: 'Family' }, { id: 35, name: 'Comedy' }],
   },
   680: {
     id: 680,
@@ -237,12 +254,136 @@ const OMDB = {
   tt0093779: { imdbRating: '8.0', Ratings: [{ Source: 'Rotten Tomatoes', Value: '97%' }] },
   tt2278388: { imdbRating: '8.1', Ratings: [{ Source: 'Rotten Tomatoes', Value: '92%' }] },
   tt0245429: { imdbRating: '8.6', Ratings: [{ Source: 'Rotten Tomatoes', Value: '97%' }] },
+  tt0114709: { imdbRating: '8.3', Ratings: [{ Source: 'Rotten Tomatoes', Value: '100%' }] },
   tt0110912: { imdbRating: '8.9', Ratings: [{ Source: 'Rotten Tomatoes', Value: '92%' }] },
   // No Rotten Tomatoes entry — the realistic case for series, renders as "—".
   tt0903747: { imdbRating: '9.5', Ratings: [] },
   tt10919420: { imdbRating: '8.0', Ratings: [] },
   tt4574334: { imdbRating: '8.7', Ratings: [] },
 };
+
+/* Availability fixtures, chosen to exercise every rendering branch:
+ *   Parasite       all four rows, and a provider in both `free` and `ads`
+ *   Princess Bride rent/buy only — no way to stream it
+ *   Breaking Bad   subscription streaming only
+ *   Spirited Away  nothing at all, i.e. the empty state
+ */
+const PROVIDERS = {
+  netflix: { provider_id: 8, provider_name: 'Netflix', logo_path: '/net.jpg', display_priority: 0 },
+  prime: { provider_id: 9, provider_name: 'Amazon Prime Video', logo_path: '/prime.jpg', display_priority: 2 },
+  hulu: { provider_id: 15, provider_name: 'Hulu', logo_path: '/hulu.jpg', display_priority: 4 },
+  max: { provider_id: 1899, provider_name: 'Max', logo_path: '/max.jpg', display_priority: 1 },
+  appletv: { provider_id: 2, provider_name: 'Apple TV', logo_path: '/apple.jpg', display_priority: 3 },
+  amazon: { provider_id: 10, provider_name: 'Amazon Video', logo_path: '/amz.jpg', display_priority: 5 },
+  google: { provider_id: 3, provider_name: 'Google Play Movies', logo_path: '/gp.jpg', display_priority: 8 },
+  tubi: { provider_id: 73, provider_name: 'Tubi TV', logo_path: '/tubi.jpg', display_priority: 12 },
+  pluto: { provider_id: 300, provider_name: 'Pluto TV', logo_path: '/pluto.jpg', display_priority: 10 },
+};
+
+const WATCH = {
+  'movie:496243': {
+    link: 'https://www.themoviedb.org/movie/496243/watch?locale=US',
+    // Deliberately out of display_priority order, so the sort is exercised.
+    flatrate: [PROVIDERS.hulu, PROVIDERS.max, PROVIDERS.netflix],
+    free: [PROVIDERS.tubi],
+    // Tubi appears in both lists on the real API; it must not render twice.
+    ads: [PROVIDERS.tubi, PROVIDERS.pluto],
+    rent: [PROVIDERS.appletv, PROVIDERS.amazon],
+    buy: [PROVIDERS.appletv, PROVIDERS.amazon, PROVIDERS.google],
+  },
+  'movie:2493': {
+    link: 'https://www.themoviedb.org/movie/2493/watch?locale=US',
+    rent: [PROVIDERS.appletv, PROVIDERS.amazon],
+    buy: [PROVIDERS.appletv, PROVIDERS.google],
+  },
+  'tv:1396': {
+    link: 'https://www.themoviedb.org/tv/1396/watch?locale=US',
+    flatrate: [PROVIDERS.netflix],
+  },
+  'tv:93405': {
+    link: 'https://www.themoviedb.org/tv/93405/watch?locale=US',
+    flatrate: [PROVIDERS.netflix],
+    buy: [PROVIDERS.google],
+  },
+};
+
+/* AniList fixtures for the Anime tile and detail-sheet enrichment. Spirited
+ * Away is deliberately present in both TMDB and AniList so the enrichment path
+ * (TMDB sheet + AniList score/studio/tags) can be exercised end to end. */
+const ANILIST = [
+  {
+    id: 129,
+    title: { romaji: 'Sen to Chihiro no Kamikakushi', english: 'Spirited Away', native: '千と千尋の神隠し' },
+    format: 'MOVIE',
+    episodes: 1,
+    seasonYear: 2001,
+    averageScore: 87,
+    genres: ['Adventure', 'Fantasy'],
+    description: 'A young girl wanders into a world of spirits and must work to free her parents.',
+    coverImage: { large: '' },
+    studios: { nodes: [{ name: 'Studio Ghibli' }] },
+    tags: [
+      { name: 'Iyashikei', rank: 78, isGeneralSpoiler: false },
+      { name: 'Coming of Age', rank: 71, isGeneralSpoiler: false },
+      { name: 'Shapeshifting', rank: 40, isGeneralSpoiler: false },
+      { name: 'Secret Identity', rank: 90, isGeneralSpoiler: true },
+    ],
+  },
+  {
+    id: 16498,
+    title: { romaji: 'Shingeki no Kyojin', english: 'Attack on Titan', native: '進撃の巨人' },
+    format: 'TV',
+    episodes: 25,
+    seasonYear: 2013,
+    averageScore: 85,
+    genres: ['Action', 'Drama', 'Fantasy'],
+    description: 'Humanity fights for survival against man-eating giants.',
+    coverImage: { large: '' },
+    studios: { nodes: [{ name: 'Wit Studio' }] },
+    tags: [{ name: 'Survival', rank: 88, isGeneralSpoiler: false }],
+  },
+  {
+    id: 21519,
+    title: { romaji: 'Kimi no Na wa.', english: 'Your Name.', native: '君の名は。' },
+    format: 'MOVIE',
+    episodes: 1,
+    seasonYear: 2016,
+    averageScore: 85,
+    genres: ['Romance', 'Drama'],
+    description: 'Two teenagers discover they are swapping bodies across time.',
+    coverImage: { large: '' },
+    studios: { nodes: [{ name: 'CoMix Wave Films' }] },
+    tags: [{ name: 'Time Skip', rank: 80, isGeneralSpoiler: false }],
+  },
+  {
+    id: 101922,
+    title: { romaji: 'Kimetsu no Yaiba', english: 'Demon Slayer', native: '鬼滅の刃' },
+    format: 'TV',
+    episodes: 26,
+    seasonYear: 2019,
+    averageScore: 83,
+    genres: ['Action', 'Fantasy'],
+    description: 'A boy becomes a demon slayer to avenge his family and cure his sister.',
+    coverImage: { large: '' },
+    studios: { nodes: [{ name: 'ufotable' }] },
+    tags: [{ name: 'Swordplay', rank: 85, isGeneralSpoiler: false }],
+  },
+];
+
+const REGIONS = [
+  { iso_3166_1: 'US', english_name: 'United States of America' },
+  { iso_3166_1: 'GB', english_name: 'United Kingdom' },
+  { iso_3166_1: 'CA', english_name: 'Canada' },
+  { iso_3166_1: 'AU', english_name: 'Australia' },
+  { iso_3166_1: 'DE', english_name: 'Germany' },
+];
+
+function watchFor(type, id) {
+  const entry = WATCH[`${type}:${id}`];
+  // A title with no availability still returns a well-formed payload with an
+  // empty results map — that is what TMDB does, and what the empty state reads.
+  return { id: Number(id), results: entry ? { US: entry } : {} };
+}
 
 const RECS = {
   'movie:496243': [129, 120467, 680],
@@ -293,6 +434,24 @@ export function mockFetch(path, params = {}) {
     return delay({ genres: genreList });
   }
 
+  if (path === '/watch/providers/regions') {
+    return delay({ results: REGIONS });
+  }
+
+  if (path === '/watch/providers/movie' || path === '/watch/providers/tv') {
+    return delay({ results: Object.values(PROVIDERS) });
+  }
+
+  let m = path.match(/^\/discover\/(movie|tv)$/);
+  if (m) {
+    const type = m[1];
+    const wanted = Number(params.with_genres);
+    const results = allResults()
+      .filter((r) => r.media_type === type)
+      .filter((r) => (r.genres || []).some((g) => g.id === wanted));
+    return delay({ results, total_results: results.length });
+  }
+
   if (path === '/search/multi') {
     const q = String(params.query || '').toLowerCase();
     const results = allResults().filter((r) =>
@@ -307,7 +466,7 @@ export function mockFetch(path, params = {}) {
     return delay({ results: allResults() });
   }
 
-  let m = path.match(/^\/(movie|tv)\/(\d+)\/recommendations$/);
+  m = path.match(/^\/(movie|tv)\/(\d+)\/recommendations$/);
   if (m) {
     const ids = RECS[`${m[1]}:${m[2]}`] || [];
     return delay({ results: ids.map(byId).filter(Boolean) });
@@ -332,6 +491,7 @@ export function mockFetch(path, params = {}) {
       ...raw,
       credits: { cast: CAST[m[1]] || [] },
       external_ids: { imdb_id: raw.imdb_id },
+      'watch/providers': watchFor('movie', m[1]),
       recommendations: { results: recIds.map(byId).filter(Boolean) },
     });
   }
@@ -344,6 +504,7 @@ export function mockFetch(path, params = {}) {
     return delay({
       ...raw,
       credits: { cast: CAST[m[1]] || [] },
+      'watch/providers': watchFor('tv', m[1]),
       recommendations: { results: recIds.map(byId).filter(Boolean) },
     });
   }
@@ -362,4 +523,23 @@ export function mockFetch(path, params = {}) {
 
 export function mockOmdb(imdbId) {
   return OMDB[imdbId] || { Response: 'False', Error: 'Movie not found!' };
+}
+
+/** AniList is POSTed as GraphQL rather than going through mockFetch's routing. */
+export function mockAnilist(query, variables = {}) {
+  const delay = (value) => new Promise((r) => setTimeout(() => r(value), 60));
+
+  if (/Page\s*\(/.test(query)) {
+    const formats = variables.format_in || [];
+    const media = ANILIST.filter((m) => !formats.length || formats.includes(m.format));
+    return delay({ Page: { media } });
+  }
+
+  const term = String(variables.search || '').toLowerCase();
+  const hit = ANILIST.find((m) =>
+    [m.title.romaji, m.title.english, m.title.native]
+      .filter(Boolean)
+      .some((t) => t.toLowerCase().includes(term) || term.includes(t.toLowerCase()))
+  );
+  return delay({ Media: hit || null });
 }

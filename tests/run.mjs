@@ -31,12 +31,25 @@ class MemoryStorage {
 globalThis.localStorage = new MemoryStorage();
 globalThis.location = { search: '', pathname: '/', hash: '', origin: 'http://localhost' };
 
+// Node ships its own read-only `navigator`, so it has to be redefined rather
+// than assigned.
+function setLanguage(language) {
+  Object.defineProperty(globalThis, 'navigator', {
+    value: { language },
+    configurable: true,
+    writable: true,
+  });
+}
+setLanguage('en-US');
+
 const store = await import('../js/store.js');
 const tmdb = await import('../js/tmdb.js');
 const sortMod = await import('../js/sort.js');
 const rec = await import('../js/recommend.js');
 const sync = await import('../js/sync.js');
 const omdb = await import('../js/omdb.js');
+const genres = await import('../js/genres.js');
+const anilist = await import('../js/anilist.js');
 
 function resetStore() {
   for (const key of Object.keys(store.state.items)) delete store.state.items[key];
@@ -58,6 +71,76 @@ test('title toggle is offered only for genuinely foreign titles', () => {
   // Foreign-language but identically titled (proper nouns) — nothing to toggle.
   assert.equal(tmdb.hasForeignTitle('Roma', 'Roma', 'es'), false);
   assert.equal(tmdb.hasForeignTitle('Parasite', '', 'ko'), false);
+});
+
+/* ---------- watch providers ---------- */
+
+const WATCH_PAYLOAD = {
+  results: {
+    US: {
+      link: 'https://www.themoviedb.org/movie/1/watch?locale=US',
+      flatrate: [
+        { provider_id: 15, provider_name: 'Hulu', display_priority: 4 },
+        { provider_id: 8, provider_name: 'Netflix', display_priority: 0 },
+        { provider_id: 1899, provider_name: 'Max', display_priority: 1 },
+      ],
+      free: [{ provider_id: 73, provider_name: 'Tubi TV', display_priority: 12 }],
+      ads: [
+        { provider_id: 73, provider_name: 'Tubi TV', display_priority: 12 },
+        { provider_id: 300, provider_name: 'Pluto TV', display_priority: 10 },
+      ],
+      rent: [{ provider_id: 2, provider_name: 'Apple TV', display_priority: 3 }],
+      buy: [{ provider_id: 3, provider_name: 'Google Play Movies', display_priority: 8 }],
+    },
+  },
+};
+
+const names = (list) => list.map((p) => p.name);
+
+test('providers are bucketed into the four rows the sheet shows', () => {
+  const p = tmdb.normalizeProviders(WATCH_PAYLOAD, 'US');
+  assert.deepEqual(names(p.stream), ['Netflix', 'Max', 'Hulu']); // by display_priority
+  assert.deepEqual(names(p.rent), ['Apple TV']);
+  assert.deepEqual(names(p.buy), ['Google Play Movies']);
+  assert.equal(p.link, WATCH_PAYLOAD.results.US.link);
+  assert.equal(p.region, 'US');
+});
+
+test('free and ad-supported merge without listing a provider twice', () => {
+  // Tubi is in both `free` and `ads` on the real API.
+  const p = tmdb.normalizeProviders(WATCH_PAYLOAD, 'US');
+  assert.deepEqual(names(p.free), ['Pluto TV', 'Tubi TV']);
+  assert.equal(p.free.filter((x) => x.id === 73).length, 1);
+});
+
+test('a title unavailable in your region is empty, not an error', () => {
+  // Absent regions are routine — most titles are listed in only a few markets.
+  for (const payload of [WATCH_PAYLOAD, { results: {} }, {}, null, undefined]) {
+    const p = tmdb.normalizeProviders(payload, 'ZZ');
+    assert.equal(tmdb.hasAnyProvider(p), false);
+    assert.deepEqual([p.stream, p.free, p.rent, p.buy], [[], [], [], []]);
+    assert.equal(p.link, null);
+    assert.equal(p.region, 'ZZ');
+  }
+  assert.equal(tmdb.hasAnyProvider(tmdb.normalizeProviders(WATCH_PAYLOAD, 'US')), true);
+});
+
+test('region falls back from setting to locale to US', () => {
+  resetStore();
+  setLanguage('en-GB');
+  assert.equal(tmdb.resolveRegion(), 'GB');
+
+  store.state.settings.region = 'DE';
+  assert.equal(tmdb.resolveRegion(), 'DE');
+
+  store.state.settings.region = '';
+  setLanguage('en'); // no region subtag
+  assert.equal(tmdb.resolveRegion(), 'US');
+
+  setLanguage('not a locale');
+  assert.equal(tmdb.resolveRegion(), 'US');
+
+  setLanguage('en-US');
 });
 
 /* ---------- tv normalization ---------- */
@@ -405,6 +488,154 @@ test('seeds are the most recently liked titles', () => {
     d: { rating: 'up', updatedAt: 2 },
   });
   assert.deepEqual(seeds.map((s) => s.updatedAt), [3, 2, 1]);
+});
+
+/* ---------- genre catalog ---------- */
+
+test('every genre is queryable somehow, and keys are unique', () => {
+  const keys = genres.GENRES.map((g) => g.key);
+  assert.equal(new Set(keys).size, keys.length, 'duplicate genre keys');
+
+  for (const g of genres.GENRES) {
+    assert.ok(g.name, `${g.key} has no name`);
+    assert.ok(
+      g.source || g.movie || g.tv,
+      `${g.key} has neither a TMDB id nor an alternative source`
+    );
+    for (const id of [g.movie, g.tv]) {
+      if (id != null) assert.ok(Number.isInteger(id), `${g.key} has a non-integer id`);
+    }
+  }
+});
+
+test('a genre only offers the types TMDB actually has ids for', () => {
+  // Horror exists for film but not as a TMDB TV genre.
+  assert.deepEqual(genres.availableTypes(genres.findGenre('horror')), ['movie']);
+  assert.deepEqual(genres.availableTypes(genres.findGenre('reality')), ['tv']);
+  assert.deepEqual(genres.availableTypes(genres.findGenre('drama')), ['movie', 'tv']);
+  assert.deepEqual(genres.availableTypes(genres.findGenre('anime')), ['movie', 'tv']);
+  assert.deepEqual(genres.availableTypes(null), []);
+});
+
+test('movie and TV genre ids differ where TMDB says they do', () => {
+  const action = genres.findGenre('action');
+  assert.equal(genres.genreIdFor(action, 'movie'), 28);
+  assert.equal(genres.genreIdFor(action, 'tv'), 10759); // "Action & Adventure"
+});
+
+test('anime is its own tile, and Animation is marked to exclude it', () => {
+  assert.equal(genres.findGenre('anime').source, 'anilist');
+  assert.equal(genres.findGenre('animation').excludeJapanese, true);
+});
+
+/* ---------- affinity ranking ---------- */
+
+test('within a genre, ranking leans on a candidate’s other genres', () => {
+  const affinity = { Comedy: -1, Crime: 1 };
+  // Both are thrillers; what separates them is the second genre.
+  const ranked = rec.rankByAffinity(
+    [
+      { title: 'Funny thriller', genres: ['Thriller', 'Comedy'] },
+      { title: 'Crime thriller', genres: ['Thriller', 'Crime'] },
+    ],
+    affinity
+  );
+  assert.deepEqual(ranked.map((r) => r.title), ['Crime thriller', 'Funny thriller']);
+});
+
+test('ranking preserves source order when nothing is known about you', () => {
+  const items = [{ title: 'A', genres: [] }, { title: 'B', genres: [] }, { title: 'C', genres: [] }];
+  assert.deepEqual(rec.rankByAffinity(items, {}).map((i) => i.title), ['A', 'B', 'C']);
+  assert.deepEqual(rec.rankByAffinity([], {}), []);
+});
+
+/* ---------- anilist ---------- */
+
+const ANILIST_MEDIA = {
+  id: 129,
+  title: { romaji: 'Sen to Chihiro no Kamikakushi', english: 'Spirited Away', native: '千と千尋の神隠し' },
+  format: 'MOVIE',
+  episodes: 1,
+  seasonYear: 2001,
+  averageScore: 87,
+  genres: ['Adventure', 'Fantasy'],
+  description: 'A young girl <br>wanders into a world of <i>spirits</i>.',
+  coverImage: { large: 'https://img.anili.st/129.jpg' },
+  studios: { nodes: [{ name: 'Studio Ghibli' }] },
+  tags: [
+    { name: 'Iyashikei', rank: 78, isGeneralSpoiler: false },
+    { name: 'Low rank', rank: 20, isGeneralSpoiler: false },
+    { name: 'Spoilery', rank: 95, isGeneralSpoiler: true },
+  ],
+};
+
+test('an AniList entry becomes an ordinary app item', () => {
+  const item = anilist.normalizeAnime(ANILIST_MEDIA);
+  assert.equal(item.type, 'movie'); // MOVIE format
+  assert.equal(item.title, 'Spirited Away'); // English preferred
+  assert.equal(item.originalTitle, 'Sen to Chihiro no Kamikakushi');
+  assert.equal(item.foreign, true);
+  assert.equal(item.year, 2001);
+  assert.equal(item.studio, 'Studio Ghibli');
+  assert.equal(item.source, 'anilist');
+  // AniList scores out of 100; the app's cells are out of 10.
+  assert.equal(item.anilistScore, 8.7);
+  // Description markup is stripped, not rendered.
+  assert.ok(!/[<>]/.test(item.overview));
+  assert.equal(item.overview, 'A young girl wanders into a world of spirits.');
+  assert.equal(anilist.normalizeAnime(null), null);
+});
+
+test('AniList tags drop spoilers and weakly-voted noise', () => {
+  const item = anilist.normalizeAnime(ANILIST_MEDIA);
+  assert.deepEqual(item.tags, ['Iyashikei']);
+});
+
+test('TV-shaped AniList formats map to the TV type', () => {
+  for (const format of ['TV', 'TV_SHORT', 'ONA', 'OVA', 'SPECIAL']) {
+    assert.equal(anilist.normalizeAnime({ ...ANILIST_MEDIA, format }).type, 'tv');
+  }
+  assert.equal(anilist.normalizeAnime({ ...ANILIST_MEDIA, format: 'MOVIE' }).type, 'movie');
+});
+
+test('already-seen anime is matched by title, since it has no TMDB id yet', () => {
+  const entries = [
+    { title: 'Spirited Away', originalTitle: 'Sen to Chihiro no Kamikakushi', year: 2001 },
+    { title: 'Your Name.', originalTitle: 'Kimi no Na wa.', year: 2016 },
+    { title: 'Demon Slayer', originalTitle: 'Kimetsu no Yaiba', year: 2019 },
+  ];
+  const stored = {
+    // Stored under its TMDB id, which no AniList entry carries.
+    'movie:129': { title: 'Spirited Away', year: 2001, rating: 'once' },
+    // Punctuation differs between the two sources, and the year drifts by one.
+    'movie:372058': { title: 'Your Name', year: 2017, watched: true },
+    // Untracked: seen it in the API but never engaged with, so not "seen".
+    'tv:85937': { title: 'Demon Slayer', year: 2019 },
+  };
+
+  const left = anilist.rejectSeen(entries, stored).map((e) => e.title);
+  assert.deepEqual(left, ['Demon Slayer']);
+});
+
+test('title matching does not reject on year alone', () => {
+  const entries = [{ title: 'Trigun', originalTitle: '', year: 1998 }];
+  // Same year, different show — must survive.
+  const stored = { 'tv:1': { title: 'Cowboy Bebop', year: 1998, watched: true } };
+  assert.equal(anilist.rejectSeen(entries, stored).length, 1);
+  // Nothing tracked at all: everything survives.
+  assert.equal(anilist.rejectSeen(entries, {}).length, 1);
+});
+
+test('anime detection is narrow enough not to fire on lookalikes', () => {
+  const anime = { originalLanguage: 'ja', genres: ['Animation', 'Fantasy'] };
+  assert.equal(anilist.looksLikeAnime(anime), true);
+
+  // Japanese, but live action.
+  assert.equal(anilist.looksLikeAnime({ originalLanguage: 'ja', genres: ['Drama'] }), false);
+  // Animated, but not Japanese.
+  assert.equal(anilist.looksLikeAnime({ originalLanguage: 'en', genres: ['Animation'] }), false);
+  assert.equal(anilist.looksLikeAnime({ originalLanguage: 'ja', genres: [] }), false);
+  assert.equal(anilist.looksLikeAnime(null), false);
 });
 
 /* ---------- sync merge ---------- */

@@ -5,7 +5,7 @@
  * API, not the app.
  */
 
-import { secrets } from './store.js';
+import { secrets, state } from './store.js';
 import { cached, cacheGet, cacheSet } from './idb.js';
 import { isMock, mockFetch } from './mock.js';
 
@@ -72,6 +72,8 @@ async function request(path, params = {}) {
 
 export function posterUrl(path, size = 'w185') {
   if (!path) return null;
+  // AniList hands back absolute cover URLs; TMDB hands back bare paths.
+  if (/^https?:\/\//.test(path)) return path;
   if (isMock()) return null; // fixtures render placeholders, no network
   return `${IMG}/${size}${path}`;
 }
@@ -229,14 +231,20 @@ export async function trending() {
     .map((r) => normalizeResult(r, genres));
 }
 
+// Watch providers ride along on the detail call — no extra request. The cache
+// key carries a version because entries stored before providers were requested
+// would otherwise serve a sheet with no availability box for a full TTL.detail.
+const DETAIL_APPEND = 'credits,external_ids,recommendations,watch/providers';
+
 export async function movieDetail(id) {
-  const raw = await cached(`movie:${id}`, TTL.detail, () =>
-    request(`/movie/${id}`, { append_to_response: 'credits,external_ids,recommendations' })
+  const raw = await cached(`movie:v2:${id}`, TTL.detail, () =>
+    request(`/movie/${id}`, { append_to_response: DETAIL_APPEND })
   );
   const genres = await genreMap().catch(() => ({}));
   return {
     ...normalizeMovie(raw, genres),
     cast: (raw.credits?.cast || []).slice(0, 10).map(normalizeCastMember),
+    providers: normalizeProviders(raw['watch/providers'], resolveRegion()),
     recommendations: (raw.recommendations?.results || [])
       .slice(0, 20)
       .map((r) => normalizeResult({ ...r, media_type: r.media_type || 'movie' }, genres)),
@@ -244,17 +252,93 @@ export async function movieDetail(id) {
 }
 
 export async function tvDetail(id) {
-  const raw = await cached(`tv:${id}`, TTL.detail, () =>
-    request(`/tv/${id}`, { append_to_response: 'credits,external_ids,recommendations' })
+  const raw = await cached(`tv:v2:${id}`, TTL.detail, () =>
+    request(`/tv/${id}`, { append_to_response: DETAIL_APPEND })
   );
   const genres = await genreMap().catch(() => ({}));
   return {
     ...normalizeTv(raw, genres),
     cast: (raw.credits?.cast || []).slice(0, 10).map(normalizeCastMember),
+    providers: normalizeProviders(raw['watch/providers'], resolveRegion()),
     recommendations: (raw.recommendations?.results || [])
       .slice(0, 20)
       .map((r) => normalizeResult({ ...r, media_type: r.media_type || 'tv' }, genres)),
   };
+}
+
+/* ---------- watch providers ---------- */
+
+/** The country whose availability to show: saved setting, else locale, else US. */
+export function resolveRegion() {
+  const saved = state.settings.region;
+  if (saved) return saved;
+  try {
+    const region = new Intl.Locale(navigator.language).region;
+    if (region) return region.toUpperCase();
+  } catch {
+    /* Intl.Locale is unavailable or the tag is malformed */
+  }
+  return 'US';
+}
+
+function mapProviders(list) {
+  return (list || [])
+    .slice()
+    .sort((a, b) => (a.display_priority ?? 999) - (b.display_priority ?? 999))
+    .map((p) => ({ id: p.provider_id, name: p.provider_name, logo: p.logo_path || null }));
+}
+
+function dedupeById(list) {
+  const seen = new Set();
+  return (list || []).filter((p) => !seen.has(p.provider_id) && seen.add(p.provider_id));
+}
+
+/**
+ * Flatten TMDB's per-country availability into the four rows the sheet shows.
+ *
+ * Availability is region-scoped, and a title missing from a region is the
+ * ordinary case rather than an error — obscure and unreleased titles are simply
+ * absent — so this returns empty lists instead of throwing.
+ */
+export function normalizeProviders(payload, region) {
+  const forRegion = payload?.results?.[region];
+  if (!forRegion) return { region, link: null, stream: [], free: [], rent: [], buy: [] };
+  return {
+    region,
+    link: forRegion.link || null,
+    stream: mapProviders(forRegion.flatrate),
+    // Ad-supported and genuinely free are one proposition to a viewer, and a
+    // provider can legitimately appear in both lists. Merge before sorting, so
+    // the combined row still comes out in display_priority order.
+    free: mapProviders(dedupeById([...(forRegion.free || []), ...(forRegion.ads || [])])),
+    rent: mapProviders(forRegion.rent),
+    buy: mapProviders(forRegion.buy),
+  };
+}
+
+export function hasAnyProvider(providers) {
+  return Boolean(
+    providers &&
+      (providers.stream.length || providers.free.length || providers.rent.length || providers.buy.length)
+  );
+}
+
+/** Countries TMDB has availability data for, for the Settings picker. */
+export async function watchRegions() {
+  const data = await cached('watch-regions', TTL.genres, () =>
+    request('/watch/providers/regions')
+  );
+  return (data.results || [])
+    .map((r) => ({ code: r.iso_3166_1, name: r.english_name || r.native_name || r.iso_3166_1 }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** Providers available in a region, most prominent first, for "My services". */
+export async function providersForRegion(region) {
+  const data = await cached(`watch-providers:${region}`, TTL.genres, () =>
+    request('/watch/providers/movie', { watch_region: region })
+  );
+  return mapProviders(data.results);
 }
 
 function normalizeCastMember(c) {
@@ -312,6 +396,28 @@ export async function personCredits(personId) {
     knownForDepartment: raw.known_for_department || '',
     credits: [...seen.values()],
   };
+}
+
+/**
+ * Popular titles in a genre.
+ *
+ * `vote_count.gte` keeps the long tail of near-unrated entries out; TMDB's
+ * popularity sort otherwise surfaces a lot of noise in the smaller genres.
+ */
+export async function discoverByGenre(type, genreId, { page = 1 } = {}) {
+  const [data, genres] = await Promise.all([
+    cached(`discover:${type}:${genreId}:${page}`, TTL.trending, () =>
+      request(`/discover/${type}`, {
+        with_genres: genreId,
+        sort_by: 'popularity.desc',
+        include_adult: 'false',
+        'vote_count.gte': type === 'movie' ? 200 : 50,
+        page,
+      })
+    ),
+    genreMap().catch(() => ({})),
+  ]);
+  return (data.results || []).map((r) => normalizeResult({ ...r, media_type: type }, genres));
 }
 
 export async function recommendationsFor(type, id) {

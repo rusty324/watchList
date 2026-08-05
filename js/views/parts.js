@@ -6,7 +6,7 @@
  */
 
 import { h, icon, posterBox, displayTitle, toast } from '../ui.js';
-import { profileUrl } from '../tmdb.js';
+import { profileUrl, posterUrl } from '../tmdb.js';
 import {
   state,
   getItem,
@@ -85,26 +85,47 @@ export function scoresBlock(meta) {
   const node = h('div', { class: 'scores' });
 
   const cell = (cls, label) => {
+    const labelEl = h('div', { class: 's-label' }, label);
     const val = h('div', { class: 's-val' }, '—');
-    node.append(
-      h('div', { class: `score ${cls}` }, h('div', { class: 's-label' }, label), val)
-    );
-    return val;
+    const box = h('div', { class: `score ${cls}` }, labelEl, val);
+    node.append(box);
+    return { box, labelEl, val };
   };
 
-  const imdbVal = cell('imdb', 'IMDb');
-  const rtVal = cell('rt', 'Rotten Tom.');
-  const tmdbVal = cell('tmdb', 'TMDB');
+  const imdb = cell('imdb', 'IMDb');
+  const middle = cell('rt', 'Rotten Tom.');
+  const tmdb = cell('tmdb', 'TMDB');
+
+  // Anime carries an AniList score in place of Rotten Tomatoes, which is almost
+  // never scored for it. A swap rather than a fourth cell — four would squeeze
+  // the row below a readable width at 390px.
+  let anilistScore = null;
 
   const update = () => {
     const s = getItem(meta.type, meta.id)?.scores || {};
-    imdbVal.textContent = s.imdb != null ? s.imdb.toFixed(1) : '—';
-    rtVal.textContent = s.rt != null ? `${s.rt}%` : '—';
-    tmdbVal.textContent = meta.tmdbScore != null ? meta.tmdbScore.toFixed(1) : '—';
+    imdb.val.textContent = s.imdb != null ? s.imdb.toFixed(1) : '—';
+    tmdb.val.textContent = meta.tmdbScore != null ? meta.tmdbScore.toFixed(1) : '—';
+
+    if (anilistScore != null) {
+      middle.box.className = 'score anilist';
+      middle.labelEl.textContent = 'AniList';
+      middle.val.textContent = anilistScore.toFixed(1);
+    } else {
+      middle.box.className = 'score rt';
+      middle.labelEl.textContent = 'Rotten Tom.';
+      middle.val.textContent = s.rt != null ? `${s.rt}%` : '—';
+    }
   };
   update();
 
-  return { node, update };
+  return {
+    node,
+    update,
+    setAnilistScore(score) {
+      anilistScore = score;
+      update();
+    },
+  };
 }
 
 /* ---------- personal rating ---------- */
@@ -236,6 +257,89 @@ export function checkboxAction(label, isOn, setOn) {
   update();
 
   return { node, update };
+}
+
+/* ---------- where to watch ---------- */
+
+const PROVIDER_ROWS = [
+  ['stream', 'Stream'],
+  ['free', 'Free'],
+  ['rent', 'Rent'],
+  ['buy', 'Buy'],
+];
+
+/**
+ * Availability box, from TMDB's JustWatch feed.
+ *
+ * Two things here are licensing obligations rather than style choices: the
+ * JustWatch credit, and sending taps to TMDB's own `link`. The API exposes no
+ * per-provider deep links, so a "Netflix" chip cannot open Netflix — the footer
+ * says where it does go rather than implying otherwise.
+ */
+export function providerBox(providers) {
+  if (!providers) return null;
+
+  const mine = new Set(state.settings.myProviders || []);
+  const open = () => {
+    if (providers.link) window.open(providers.link, '_blank', 'noopener');
+  };
+
+  const chip = (provider, subscribed) =>
+    h(
+      'button',
+      {
+        type: 'button',
+        class: `prov-chip${subscribed ? ' mine' : ''}`,
+        onclick: open,
+        title: subscribed ? `${provider.name} — you subscribe to this` : provider.name,
+      },
+      h(
+        'span',
+        { class: 'p-logo' },
+        posterUrl(provider.logo, 'w92')
+          ? h('img', { src: posterUrl(provider.logo, 'w92'), alt: '', loading: 'lazy' })
+          : provider.name.slice(0, 1)
+      ),
+      h('span', { class: 'p-name' }, provider.name),
+      subscribed ? icon('check', 'p-mine') : null
+    );
+
+  const rows = PROVIDER_ROWS.map(([key, label]) => {
+    const list = providers[key];
+    if (!list?.length) return null;
+    // Services you pay for belong at the front of the row you'd check first.
+    const ordered =
+      key === 'stream'
+        ? [...list.filter((p) => mine.has(p.id)), ...list.filter((p) => !mine.has(p.id))]
+        : list;
+    return h(
+      'div',
+      { class: 'prov-row', dataset: { row: key } },
+      h('div', { class: 'p-label' }, label),
+      h('div', { class: 'p-strip' }, ordered.map((p) => chip(p, mine.has(p.id))))
+    );
+  }).filter(Boolean);
+
+  const credit = h(
+    'button',
+    { type: 'button', class: 'prov-note', onclick: open, disabled: !providers.link },
+    `Availability from JustWatch · ${providers.region}`,
+    providers.link ? h('span', { class: 'p-arrow' }, ' ›') : null
+  );
+
+  return h(
+    'section',
+    { class: 'providers' },
+    h('h3', { class: 'section-title' }, 'Where to watch'),
+    rows.length
+      ? rows
+      : h(
+          'p',
+          { class: 'prov-empty' },
+          `Not listed to stream, rent or buy in ${providers.region}. Change your region in Settings if that looks wrong.`
+        ),
+    credit
+  );
 }
 
 /* ---------- cast ---------- */

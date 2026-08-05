@@ -8,6 +8,8 @@ site on GitHub Pages — no server, no accounts, no build step.
 - **Lists** — everything you've tracked, filtered and sorted seven ways.
 - **Three verdicts** — *Liked it*, *One and done* ("glad I saw it, but never
   again"), and *Not for me*, which you can hide from view entirely.
+- **Where to watch** — what's streaming, free, rentable or buyable in your
+  country, with your own subscriptions marked.
 - **Movies** — year, genres, IMDb / Rotten Tomatoes / TMDB scores, a synopsis,
   cast you can tap through to a sortable filmography, and an English ↔ original
   title toggle for foreign films.
@@ -122,6 +124,25 @@ filed as either a lie or a thumbs up. Tapping the active rating clears it.
 your Lists and out of Trending. Searching by name still finds them, and the
 "Not for me" filter chip on the Lists tab always shows them — so a rating you
 hide is never a rating you can't undo.
+
+### Where to watch
+
+Each detail sheet shows a **Stream / Free / Rent / Buy** box for your country.
+The data is JustWatch's, delivered through TMDB, and it rides along on the
+request the sheet already makes — so it costs no extra API calls and no extra
+key.
+
+Set your country under **Settings → Where to watch**; it's guessed from your
+device's locale until you change it. Tap the services you subscribe to under
+**My services** and they sort to the front of the Stream row with a check.
+Nothing is ever hidden — you still want to see that something left your service
+and is now rentable elsewhere.
+
+Three limits come from the data itself: there are **no prices**, availability is
+**per country**, and TMDB provides a single JustWatch link per title rather than
+per-provider deep links — so tapping *Netflix* opens the availability page, not
+Netflix. That link is also how JustWatch gets credited for the data, which their
+terms require.
 
 ### A note on specials
 

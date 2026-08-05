@@ -31,6 +31,17 @@ class MemoryStorage {
 globalThis.localStorage = new MemoryStorage();
 globalThis.location = { search: '', pathname: '/', hash: '', origin: 'http://localhost' };
 
+// Node ships its own read-only `navigator`, so it has to be redefined rather
+// than assigned.
+function setLanguage(language) {
+  Object.defineProperty(globalThis, 'navigator', {
+    value: { language },
+    configurable: true,
+    writable: true,
+  });
+}
+setLanguage('en-US');
+
 const store = await import('../js/store.js');
 const tmdb = await import('../js/tmdb.js');
 const sortMod = await import('../js/sort.js');
@@ -58,6 +69,76 @@ test('title toggle is offered only for genuinely foreign titles', () => {
   // Foreign-language but identically titled (proper nouns) — nothing to toggle.
   assert.equal(tmdb.hasForeignTitle('Roma', 'Roma', 'es'), false);
   assert.equal(tmdb.hasForeignTitle('Parasite', '', 'ko'), false);
+});
+
+/* ---------- watch providers ---------- */
+
+const WATCH_PAYLOAD = {
+  results: {
+    US: {
+      link: 'https://www.themoviedb.org/movie/1/watch?locale=US',
+      flatrate: [
+        { provider_id: 15, provider_name: 'Hulu', display_priority: 4 },
+        { provider_id: 8, provider_name: 'Netflix', display_priority: 0 },
+        { provider_id: 1899, provider_name: 'Max', display_priority: 1 },
+      ],
+      free: [{ provider_id: 73, provider_name: 'Tubi TV', display_priority: 12 }],
+      ads: [
+        { provider_id: 73, provider_name: 'Tubi TV', display_priority: 12 },
+        { provider_id: 300, provider_name: 'Pluto TV', display_priority: 10 },
+      ],
+      rent: [{ provider_id: 2, provider_name: 'Apple TV', display_priority: 3 }],
+      buy: [{ provider_id: 3, provider_name: 'Google Play Movies', display_priority: 8 }],
+    },
+  },
+};
+
+const names = (list) => list.map((p) => p.name);
+
+test('providers are bucketed into the four rows the sheet shows', () => {
+  const p = tmdb.normalizeProviders(WATCH_PAYLOAD, 'US');
+  assert.deepEqual(names(p.stream), ['Netflix', 'Max', 'Hulu']); // by display_priority
+  assert.deepEqual(names(p.rent), ['Apple TV']);
+  assert.deepEqual(names(p.buy), ['Google Play Movies']);
+  assert.equal(p.link, WATCH_PAYLOAD.results.US.link);
+  assert.equal(p.region, 'US');
+});
+
+test('free and ad-supported merge without listing a provider twice', () => {
+  // Tubi is in both `free` and `ads` on the real API.
+  const p = tmdb.normalizeProviders(WATCH_PAYLOAD, 'US');
+  assert.deepEqual(names(p.free), ['Pluto TV', 'Tubi TV']);
+  assert.equal(p.free.filter((x) => x.id === 73).length, 1);
+});
+
+test('a title unavailable in your region is empty, not an error', () => {
+  // Absent regions are routine — most titles are listed in only a few markets.
+  for (const payload of [WATCH_PAYLOAD, { results: {} }, {}, null, undefined]) {
+    const p = tmdb.normalizeProviders(payload, 'ZZ');
+    assert.equal(tmdb.hasAnyProvider(p), false);
+    assert.deepEqual([p.stream, p.free, p.rent, p.buy], [[], [], [], []]);
+    assert.equal(p.link, null);
+    assert.equal(p.region, 'ZZ');
+  }
+  assert.equal(tmdb.hasAnyProvider(tmdb.normalizeProviders(WATCH_PAYLOAD, 'US')), true);
+});
+
+test('region falls back from setting to locale to US', () => {
+  resetStore();
+  setLanguage('en-GB');
+  assert.equal(tmdb.resolveRegion(), 'GB');
+
+  store.state.settings.region = 'DE';
+  assert.equal(tmdb.resolveRegion(), 'DE');
+
+  store.state.settings.region = '';
+  setLanguage('en'); // no region subtag
+  assert.equal(tmdb.resolveRegion(), 'US');
+
+  setLanguage('not a locale');
+  assert.equal(tmdb.resolveRegion(), 'US');
+
+  setLanguage('en-US');
 });
 
 /* ---------- tv normalization ---------- */

@@ -33,7 +33,14 @@ function emptyData() {
   return {
     version: SCHEMA_VERSION,
     items: {},
-    settings: { defaultTitleLang: 'en', theme: 'auto', hideDisliked: false },
+    settings: {
+      defaultTitleLang: 'en',
+      theme: 'auto',
+      hideDisliked: false,
+      // '' means "work it out from this device's locale" — see resolveRegion().
+      region: '',
+      myProviders: [],
+    },
   };
 }
 

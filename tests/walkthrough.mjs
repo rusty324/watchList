@@ -90,6 +90,39 @@ for (const b of btnBoxes) {
   }
 }
 
+/* ---- where to watch ---- */
+const rowNames = async (row) =>
+  page.locator(`.prov-row[data-row="${row}"] .p-name`).allTextContents();
+
+const streamRow = await rowNames('stream');
+const freeRow = await rowNames('free');
+console.log('stream ->', streamRow.join(', '));
+console.log('free ->', freeRow.join(', '));
+console.log('rent ->', (await rowNames('rent')).join(', '));
+console.log('buy ->', (await rowNames('buy')).join(', '));
+
+// sorted by TMDB's display_priority, not fixture order
+if (streamRow.join('|') !== 'Netflix|Max|Hulu') {
+  problems.push(`stream row wrong or unsorted: ${streamRow.join('|')}`);
+}
+// Tubi is in both `free` and `ads` upstream and must appear once
+if (freeRow.filter((n) => n === 'Tubi TV').length !== 1) {
+  problems.push(`Tubi listed ${freeRow.filter((n) => n === 'Tubi TV').length} times in the free row`);
+}
+// all four chip strips must start at the same x, or the box looks ragged
+const stripX = await Promise.all(
+  (await page.locator('.prov-row .p-strip').all()).map(async (s) => Math.round((await s.boundingBox()).x))
+);
+console.log('strip start positions ->', stripX.join(', '));
+if (new Set(stripX).size !== 1) {
+  problems.push(`provider rows are not aligned: strips start at ${stripX.join(', ')}`);
+}
+
+const credit = await page.textContent('.prov-note');
+console.log('credit ->', credit);
+if (!/JustWatch/.test(credit)) problems.push('the JustWatch attribution line is missing');
+await shot('04a-movie-where-to-watch');
+
 // the middle rating, and the caption that carries its meaning
 await page.click('.rating-btn.once');
 await page.waitForTimeout(250);
@@ -146,7 +179,30 @@ await page.waitForTimeout(700);
 const toggles = await page.locator('.lang-toggle').count();
 console.log('princess bride lang toggles ->', toggles);
 if (toggles !== 0) problems.push('The Princess Bride wrongly offers a language toggle');
+
+// rent/buy only: empty rows must not render at all
+if (await page.locator('.prov-row[data-row="stream"]').count()) {
+  problems.push('a Stream row rendered for a title with nothing to stream');
+}
+if (!(await page.locator('.prov-row[data-row="rent"]').count())) {
+  problems.push('the Rent row is missing for a rent-only title');
+}
 await shot('08-movie-english-no-toggle');
+await page.goBack();
+await page.waitForTimeout(500);
+
+/* ---- a title with no availability at all ---- */
+await page.fill('input[type="search"]', 'spirited');
+await page.waitForTimeout(700);
+await page.click('.grid .tile');
+await page.waitForTimeout(800);
+const emptyNote = await page.textContent('.prov-empty');
+console.log('no-availability note ->', emptyNote);
+if (!/US/.test(emptyNote)) problems.push('the empty availability note does not name the region');
+if (await page.locator('.prov-row').count()) {
+  problems.push('provider rows rendered for a title with no availability');
+}
+await shot('08a-movie-no-availability');
 await page.goBack();
 await page.waitForTimeout(500);
 
@@ -288,6 +344,35 @@ if (!(await page.locator('.grid .tile .badge.once').count())) {
 }
 await shot('21-lists-one-and-done');
 
+/* ---- 11. marking a service as mine floats it to the front ---- */
+await page.click('.icon-btn[aria-label="Settings"]');
+await page.waitForTimeout(800);
+await page.fill('.sheet-body input[placeholder="Filter services"]', 'hulu');
+await page.waitForTimeout(300);
+await page.locator('.chips-wrap .chip', { hasText: 'Hulu' }).click();
+await page.waitForTimeout(300);
+await shot('22-settings-where-to-watch');
+await page.goBack();
+await page.waitForTimeout(600);
+
+await page.click('.tab[data-tab="browse"]');
+await page.waitForTimeout(600);
+await page.fill('input[type="search"]', 'para');
+await page.waitForTimeout(800);
+await page.click('.grid .tile');
+await page.waitForTimeout(900);
+const streamAfter = await page.locator('.prov-row[data-row="stream"] .p-name').allTextContents();
+console.log('stream row with Hulu subscribed ->', streamAfter.join(', '));
+if (streamAfter[0] !== 'Hulu') {
+  problems.push(`a subscribed service did not sort first: ${streamAfter.join('|')}`);
+}
+if (!(await page.locator('.prov-chip.mine').count())) {
+  problems.push('the subscribed-service marker is missing');
+}
+await shot('23-movie-my-service-first');
+await page.goBack();
+await page.waitForTimeout(500);
+
 /* ---- 11. light mode pass ---- */
 await context.close();
 const light = await browser.newContext({
@@ -301,14 +386,14 @@ const lp = await light.newPage();
 lp.on('pageerror', (e) => problems.push(`pageerror(light): ${e.message}`));
 await lp.goto(BASE, { waitUntil: 'networkidle' });
 await lp.waitForTimeout(900);
-await lp.screenshot({ path: `${OUT}/22-light-browse.png` });
+await lp.screenshot({ path: `${OUT}/24-light-browse.png` });
 await lp.fill('input[type="search"]', 'squid');
 await lp.waitForTimeout(700);
 await lp.click('.grid .tile');
 await lp.waitForTimeout(900);
 await lp.click('.rating-btn.once');
 await lp.waitForTimeout(250);
-await lp.screenshot({ path: `${OUT}/23-light-tv.png` });
+await lp.screenshot({ path: `${OUT}/25-light-tv.png` });
 
 await browser.close();
 

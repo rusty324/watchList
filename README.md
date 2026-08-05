@@ -127,6 +127,18 @@ your Lists and out of Trending. Searching by name still finds them, and the
 "Not for me" filter chip on the Lists tab always shows them — so a rating you
 hide is never a rating you can't undo.
 
+### When something stops working
+
+**Settings → Diagnostics → Check connections** pings TMDB, OMDb and AniList and
+reports each as OK, skipped or failing, with the error and the round-trip time.
+Every failure otherwise looks identical from the outside — nothing appears —
+whether the cause is an expired key, a service outage, or OMDb's daily quota
+running out, so this tells you which.
+
+It only runs when you tap it: the OMDb check genuinely spends one of the day's
+1000 lookups. The checks bypass the cache deliberately, so a cached response
+can't report a dead service as healthy.
+
 ### Genres
 
 The middle tab opens on a grid of 21 genres. Pick one and you get popular titles

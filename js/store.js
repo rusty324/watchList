@@ -15,11 +15,25 @@ const SCHEMA_VERSION = 1;
 const listeners = new Set();
 let saveTimer = null;
 
+/**
+ * The personal ratings, in descending order of enthusiasm.
+ *
+ *   up    loved it, would watch again
+ *   once  glad to have seen it, but never again — deliberately its own verdict
+ *         rather than a weak thumbs up, so it doesn't teach the recommender to
+ *         find more of the same
+ *   down  not for me
+ *
+ * A missing/null rating means "no opinion recorded", which is distinct from all
+ * three.
+ */
+export const RATINGS = ['up', 'once', 'down'];
+
 function emptyData() {
   return {
     version: SCHEMA_VERSION,
     items: {},
-    settings: { defaultTitleLang: 'en', theme: 'auto' },
+    settings: { defaultTitleLang: 'en', theme: 'auto', hideDisliked: false },
   };
 }
 
@@ -41,9 +55,9 @@ function read(key, fallback) {
 /** Runs on load so older payloads (from a Gist or an export) stay usable. */
 function migrate(data) {
   if (!data.items || typeof data.items !== 'object') data.items = {};
-  if (!data.settings || typeof data.settings !== 'object') {
-    data.settings = emptyData().settings;
-  }
+  // Merge over the defaults so settings added in a later version are present
+  // even when the payload came from an older export or another device's Gist.
+  data.settings = { ...emptyData().settings, ...(data.settings || {}) };
   data.version = SCHEMA_VERSION;
   return data;
 }

@@ -4,9 +4,10 @@ A phone-first tracker for the films and shows you've seen, the ones you mean to
 get to, and what to watch next. It runs entirely in the browser as a static
 site on GitHub Pages — no server, no accounts, no build step.
 
-- **Browse** — search TMDB, or get recommendations built from your own thumbs
-  up/down ratings.
+- **Browse** — search TMDB, or get recommendations built from your own ratings.
 - **Lists** — everything you've tracked, filtered and sorted seven ways.
+- **Three verdicts** — *Liked it*, *One and done* ("glad I saw it, but never
+  again"), and *Not for me*, which you can hide from view entirely.
 - **Movies** — year, genres, IMDb / Rotten Tomatoes / TMDB scores, a synopsis,
   cast you can tap through to a sortable filmography, and an English ↔ original
   title toggle for foreign films.
@@ -105,6 +106,22 @@ Two separate localStorage keys, on purpose:
 
 Bulky API payloads (episode lists, filmographies) are cached in IndexedDB rather
 than localStorage, so cache growth can't crowd out your watch history.
+
+### The three ratings
+
+| | Means | Effect on recommendations |
+| --- | --- | --- |
+| **Liked it** | Would happily watch again | Seeds a "Because you liked…" row; full positive weight on its genres |
+| **One and done** | Glad you saw it, but not looking for a rewatch | Never seeds a row — half positive weight on its genres |
+| **Not for me** | Didn't work for you | Steers away: full negative weight on its genres |
+
+The middle option exists so a "worth seeing once" verdict doesn't have to be
+filed as either a lie or a thumbs up. Tapping the active rating clears it.
+
+**Settings → Display → Hide "Not for me" titles** keeps disliked titles out of
+your Lists and out of Trending. Searching by name still finds them, and the
+"Not for me" filter chip on the Lists tab always shows them — so a rating you
+hide is never a rating you can't undo.
 
 ### A note on specials
 

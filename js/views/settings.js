@@ -13,6 +13,7 @@ import {
   exportData,
   replaceData,
 } from '../store.js';
+import { checkboxAction } from './parts.js';
 import { validateKey } from '../tmdb.js';
 import { quota, quotaRemaining } from '../omdb.js';
 import * as sync from '../sync.js';
@@ -250,6 +251,14 @@ export function openSettings() {
         h('option', { value: 'original', selected: state.settings.defaultTitleLang === 'original' }, 'Original title')
       );
 
+      /* ---- hide disliked ---- */
+
+      const hideDisliked = checkboxAction(
+        'Hide “Not for me” titles',
+        () => state.settings.hideDisliked,
+        (on) => setSetting('hideDisliked', on)
+      );
+
       const itemCount = Object.keys(state.items).length;
 
       fill(body, 
@@ -281,6 +290,11 @@ export function openSettings() {
         h('h3', { class: 'section-title' }, 'Display'),
         field('Default title language for foreign titles', langSelect,
           'Applies to new titles. Each title can still be toggled individually.'),
+        hideDisliked.node,
+        h('p', { class: 'hint', style: 'margin-top:6px' },
+          'Keeps titles you rated “Not for me” out of your Lists and out of Trending. ' +
+          'Searching by name still finds them, and the “Not for me” filter on the Lists tab ' +
+          'always shows them, so you can always change your mind.'),
 
         h('h3', { class: 'section-title' }, 'Sync'),
         h(

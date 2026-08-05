@@ -85,15 +85,18 @@ export function renderLists(root) {
 }
 
 function draw(host) {
-  const items = applyList(state.items, ui);
+  const items = applyList(state.items, { ...ui, settings: state.settings });
 
   if (!items.length) {
-    fill(host, 
+    fill(host,
       trackedItems(state.items).length
         ? emptyState({
             iconName: 'bookmark',
             title: 'Nothing here',
-            body: 'No titles match this filter.',
+            body:
+              state.settings.hideDisliked && ui.filter !== 'disliked'
+                ? 'No titles match this filter. “Not for me” titles are hidden — the “Not for me” chip still shows them.'
+                : 'No titles match this filter.',
           })
         : emptyState({
             iconName: 'bookmark',

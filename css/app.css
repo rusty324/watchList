@@ -11,6 +11,7 @@
   --accent: #3b6ef5;
   --accent-fg: #ffffff;
   --up: #17915b;
+  --once: #b57614;
   --down: #d1483c;
   --imdb: #b8940a;
   --rt: #d1483c;
@@ -40,6 +41,7 @@
     --accent: #6d92ff;
     --accent-fg: #06060a;
     --up: #34d187;
+    --once: #e8b13c;
     --down: #ff6b5e;
     --imdb: #f5c518;
     --rt: #fa5c48;
@@ -268,8 +270,9 @@ svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; 
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
 }
-.badge svg { width: 11px; height: 11px; stroke-width: 2.6; }
+.badge svg { width: 12px; height: 12px; stroke-width: 2.6; }
 .badge.up { color: #6ff0b2; }
+.badge.once { color: #ffd47a; }
 .badge.down { color: #ff9a90; }
 .badge.seen { color: #9dc0ff; }
 
@@ -400,20 +403,29 @@ svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; 
 .score.imdb .s-val { color: var(--imdb); }
 .score.rt .s-val { color: var(--rt); }
 
-.rating-row { display: flex; gap: 8px; margin-bottom: 12px; }
+/* Three equal columns. The clear action lives in the caption row below rather
+ * than inline, which buys each button the width to keep its label on one line. */
+.rating-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .rating-btn {
-  flex: 1;
-  min-height: 46px;
-  display: flex; align-items: center; justify-content: center; gap: 7px;
+  min-height: 62px;
+  padding: 8px 4px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px;
   border-radius: var(--r-md);
   background: var(--bg-elev);
   color: var(--fg-dim);
-  font-size: 14.5px; font-weight: 650;
+  font-size: 12.5px; font-weight: 650; line-height: 1.2; text-align: center;
 }
-.rating-btn svg { width: 19px; height: 19px; }
+.rating-btn svg { width: 20px; height: 20px; }
 .rating-btn[aria-pressed="true"].up { background: color-mix(in srgb, var(--up) 18%, var(--bg-elev)); color: var(--up); }
+.rating-btn[aria-pressed="true"].once { background: color-mix(in srgb, var(--once) 20%, var(--bg-elev)); color: var(--once); }
 .rating-btn[aria-pressed="true"].down { background: color-mix(in srgb, var(--down) 18%, var(--bg-elev)); color: var(--down); }
-.rating-btn.clear { flex: 0 0 46px; }
+
+.rating-caption {
+  display: flex; align-items: baseline; gap: 10px;
+  margin: 7px 0 12px;
+}
+.rating-caption .r-text { flex: 1; font-size: 12.5px; line-height: 1.4; color: var(--fg-dim); }
+.rating-caption .link-btn { flex: 0 0 auto; padding: 0; }
 
 .action-row { display: flex; flex-direction: column; gap: 9px; margin-bottom: 18px; }
 .action {
@@ -517,8 +529,11 @@ svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; 
 
 .field { margin-bottom: 16px; }
 .field label { display: block; font-size: 13px; font-weight: 700; margin-bottom: 5px; }
-.field .hint { font-size: 12.5px; color: var(--fg-dim); margin: 5px 0 0; line-height: 1.45; }
-.field .hint a { color: var(--accent); font-weight: 600; }
+
+/* Not scoped to .field — Settings also uses standalone hints for status lines
+ * and for the explainer under a toggle. */
+.hint { font-size: 12.5px; color: var(--fg-dim); margin: 5px 0 0; line-height: 1.45; }
+.hint a { color: var(--accent); font-weight: 600; }
 .field input[type="text"], .field input[type="password"] {
   width: 100%;
   padding: 11px 12px;

@@ -16,7 +16,20 @@ export const FILTERS = {
   movie: { label: 'Movies', test: (i) => i.type === 'movie' },
   tv: { label: 'TV', test: (i) => i.type === 'tv' },
   liked: { label: 'Liked', test: (i) => i.rating === 'up' },
+  once: { label: 'One and done', test: (i) => i.rating === 'once' },
+  disliked: { label: 'Not for me', test: (i) => i.rating === 'down' },
 };
+
+/**
+ * Whether the "hide Not for me" setting should suppress this item.
+ *
+ * Shared by the Lists tab and the Browse rows so there is one definition of the
+ * rule. Search deliberately does not consult it — a title you typed the name of
+ * should never look like it doesn't exist.
+ */
+export function hiddenByPreference(item, settings) {
+  return Boolean(settings?.hideDisliked) && item?.rating === 'down';
+}
 
 /** Title used for display and for the alphabetical sort. */
 export function sortTitle(item) {
@@ -42,8 +55,10 @@ function descNullsLast(get) {
   };
 }
 
-const RATING_ORDER = { up: 0, null: 1, down: 2 };
-const ratingRank = (item) => RATING_ORDER[item.rating ?? 'null'] ?? 1;
+// "One and done" outranks unrated: it is a positive verdict, just not one that
+// invites a rewatch.
+const RATING_ORDER = { up: 0, once: 1, null: 2, down: 3 };
+const ratingRank = (item) => RATING_ORDER[item.rating ?? 'null'] ?? RATING_ORDER.null;
 
 export const SORTS = {
   title: { label: 'Title A–Z', cmp: byTitle },
@@ -102,12 +117,20 @@ function hasEpisodeProgress(item) {
   );
 }
 
-export function applyList(items, { filter = 'all', sort = 'title', query = '' } = {}) {
+export function applyList(
+  items,
+  { filter = 'all', sort = 'title', query = '', settings = null } = {}
+) {
   const test = FILTERS[filter]?.test || FILTERS.all.test;
   const cmp = SORTS[sort]?.cmp || SORTS.title.cmp;
   const q = query.trim().toLowerCase();
 
+  // Picking the "Not for me" chip is the escape hatch: it always reveals
+  // disliked titles, so hiding them can never strand a rating you want to undo.
+  const hide = filter === 'disliked' ? null : settings;
+
   return trackedItems(items)
+    .filter((i) => !hiddenByPreference(i, hide))
     .filter(test)
     .filter((i) =>
       !q ||

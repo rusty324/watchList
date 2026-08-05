@@ -27,7 +27,7 @@ import {
   scoresBlock,
   ratingRow,
   watchlistAction,
-  watchedAction,
+  checkboxAction,
   castRow,
   snapshot,
 } from './parts.js';
@@ -75,7 +75,7 @@ export function openMovie(id, hint) {
       const scores = scoresBlock(meta);
       const rating = ratingRow(meta);
       const watchlist = watchlistAction(meta);
-      const watched = watchedAction(
+      const watched = checkboxAction(
         'Watched',
         () => getItem('movie', id)?.watched ?? false,
         (on) => {
@@ -138,7 +138,7 @@ export function openTv(id, hint) {
       const pctLabel = h('div', { class: 'pct' }, '0%');
       const progress = h('div', { class: 'progress' }, h('div', { class: 'bar' }, bar), pctLabel);
 
-      const showWatched = watchedAction(
+      const showWatched = checkboxAction(
         'Mark entire show watched',
         () => getItem('tv', id)?.watched ?? false,
         (on) => {
@@ -385,7 +385,7 @@ export function openPerson(personId, nameHint) {
                 h('div', { class: 'f-title' }, displayTitle(credit, stored)),
                 h('div', { class: 'f-meta' }, bits.join(' · '))
               ),
-              stored?.rating === 'up' ? icon('up') : stored?.rating === 'down' ? icon('down') : null
+              stored?.rating ? icon(stored.rating) : null
             );
           })
         );

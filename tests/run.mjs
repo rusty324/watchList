@@ -234,6 +234,69 @@ test('the list filter box matches original titles too', () => {
   assert.deepEqual(titlesOf(sortMod.applyList(LIST, { query: 'bread' })), []);
 });
 
+/* ---------- the "one and done" rating ---------- */
+
+// One title at each of the four rating states.
+const RATED = {
+  'movie:1': { type: 'movie', id: 1, title: 'Loved', watched: true, rating: 'up', genres: ['Drama'] },
+  'movie:2': { type: 'movie', id: 2, title: 'Once', watched: true, rating: 'once', genres: ['Drama'] },
+  'movie:3': { type: 'movie', id: 3, title: 'Unrated', watched: true, rating: null, genres: ['Drama'] },
+  'movie:4': { type: 'movie', id: 4, title: 'Disliked', watched: true, rating: 'down', genres: ['Horror'] },
+};
+
+test('“one and done” sorts between liked and unrated', () => {
+  const out = sortMod.applyList(RATED, { sort: 'personal' });
+  assert.deepEqual(titlesOf(out), ['Loved', 'Once', 'Unrated', 'Disliked']);
+});
+
+test('the one-and-done and not-for-me filters select their own titles', () => {
+  assert.deepEqual(titlesOf(sortMod.applyList(RATED, { filter: 'once' })), ['Once']);
+  assert.deepEqual(titlesOf(sortMod.applyList(RATED, { filter: 'disliked' })), ['Disliked']);
+  // "Liked" must not have widened to include the middle rating.
+  assert.deepEqual(titlesOf(sortMod.applyList(RATED, { filter: 'liked' })), ['Loved']);
+});
+
+test('tapping “one and done” twice clears it', () => {
+  resetStore();
+  assert.equal(store.setRating('movie', 550, 'once'), 'once');
+  assert.equal(store.setRating('movie', 550, 'once'), null);
+  // Switching between ratings replaces rather than clears.
+  assert.equal(store.setRating('movie', 550, 'once'), 'once');
+  assert.equal(store.setRating('movie', 550, 'down'), 'down');
+});
+
+/* ---------- hiding disliked titles ---------- */
+
+test('the hide setting removes “not for me” titles from lists', () => {
+  const shown = sortMod.applyList(RATED, { settings: { hideDisliked: true } });
+  assert.ok(!titlesOf(shown).includes('Disliked'));
+  assert.equal(shown.length, 3);
+
+  // Off by default, and an absent setting must not hide anything.
+  assert.equal(sortMod.applyList(RATED, {}).length, 4);
+  assert.equal(sortMod.applyList(RATED, { settings: { hideDisliked: false } }).length, 4);
+});
+
+test('the “not for me” filter always reveals hidden titles', () => {
+  // The escape hatch: without this, hiding a rating would strand it with no way
+  // back to the sheet that could change it.
+  const out = sortMod.applyList(RATED, {
+    filter: 'disliked',
+    settings: { hideDisliked: true },
+  });
+  assert.deepEqual(titlesOf(out), ['Disliked']);
+});
+
+test('hiding only ever touches disliked titles', () => {
+  const settings = { hideDisliked: true };
+  assert.equal(sortMod.hiddenByPreference({ rating: 'down' }, settings), true);
+  for (const rating of ['up', 'once', null, undefined]) {
+    assert.equal(sortMod.hiddenByPreference({ rating }, settings), false);
+  }
+  assert.equal(sortMod.hiddenByPreference({ rating: 'down' }, { hideDisliked: false }), false);
+  assert.equal(sortMod.hiddenByPreference({ rating: 'down' }, null), false);
+});
+
 /* ---------- recommendations ---------- */
 
 test('genre affinity weighs thumbs down as well as thumbs up', () => {
@@ -248,6 +311,29 @@ test('genre affinity weighs thumbs down as well as thumbs up', () => {
   assert.equal(affinity.Horror, -1);
   assert.equal(affinity.Drama, 0); // one up, one down
   assert.equal(affinity.Comedy, undefined); // unrated titles contribute nothing
+});
+
+test('“one and done” counts as a half-strength positive for genre', () => {
+  const affinity = rec.genreAffinity([
+    { rating: 'once', genres: ['Documentary'] },
+    { rating: 'once', genres: ['Western'] },
+    { rating: 'up', genres: ['Western'] },
+  ]);
+  // Enjoyed the watch, just not the rewatch — a real but softer signal.
+  assert.equal(affinity.Documentary, 0.5);
+  assert.equal(affinity.Western, 0.75);
+});
+
+test('“one and done” titles never seed a rail, but are never recommended back', () => {
+  const items = {
+    'movie:1': { type: 'movie', id: 1, rating: 'up', updatedAt: 2 },
+    'movie:2': { type: 'movie', id: 2, rating: 'once', updatedAt: 3 },
+  };
+  // Rails read "Because you liked X" — seeding from a no-rewatch verdict would
+  // surface more of exactly what the user said they're done with.
+  assert.deepEqual(rec.seedsFrom(items).map((s) => s.id), [1]);
+  // But it is still something they've dealt with, so it stays out of the picks.
+  assert.ok(rec.excludeSet(items).has('movie:2'));
 });
 
 test('candidates recommended by several liked titles outrank one-offs', () => {

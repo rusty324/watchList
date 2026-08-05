@@ -17,14 +17,23 @@ const RANK_WINDOW = 20;
 const AFFINITY_WEIGHT = 0.3;
 
 /**
+ * How much each rating moves genre affinity.
+ *
+ * "One and done" counts as a mild positive: you enjoyed the watch, you just
+ * won't revisit that particular title — and genre affinity is about finding new
+ * things, not rewatches.
+ */
+const RATING_WEIGHT = { up: 1, once: 0.5, down: -1 };
+
+/**
  * Genre -> -1..1 preference. A genre you've liked 3 times and disliked once
  * lands positive; one you've only ever disliked lands at -1.
  */
 export function genreAffinity(items) {
   const tally = new Map();
   for (const item of items) {
-    if (!item.rating) continue;
-    const delta = item.rating === 'up' ? 1 : -1;
+    const delta = RATING_WEIGHT[item.rating];
+    if (delta === undefined) continue;
     for (const genre of item.genres || []) {
       const cur = tally.get(genre) || { score: 0, count: 0 };
       cur.score += delta;
@@ -93,6 +102,11 @@ export function excludeSet(items) {
   return set;
 }
 
+/**
+ * Seeds are thumbs-up only. "One and done" still steers genre affinity, but
+ * seeding a rail from it would surface more of exactly what you said you don't
+ * want to revisit — and the rails are captioned "Because you liked X".
+ */
 export function seedsFrom(items) {
   return Object.values(items)
     .filter((i) => i.rating === 'up')

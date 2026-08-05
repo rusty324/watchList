@@ -5,6 +5,7 @@ import { h, icon, clear, fill, grid, skeletonGrid, emptyState, displayTitle, til
 import { state, getItem, hasKeys } from '../store.js';
 import { search, trending, hasTmdbKey } from '../tmdb.js';
 import { buildRecommendations, seedsFrom } from '../recommend.js';
+import { hiddenByPreference } from '../sort.js';
 import { openItem } from './detail.js';
 import { openSettings } from './settings.js';
 
@@ -131,6 +132,11 @@ async function renderHome(host) {
 
   fill(host, skeletonGrid(6));
 
+  // Applies to the browsing rows only. Search deliberately still returns
+  // disliked titles — see hiddenByPreference in sort.js.
+  const visible = (items) =>
+    items.filter((i) => !hiddenByPreference(storedFor(i), state.settings));
+
   const seeds = seedsFrom(state.items);
   const sections = [];
 
@@ -147,7 +153,7 @@ async function renderHome(host) {
     sections.push(
       h('h2', { class: 'section-title' }, 'Top picks for you'),
       h('p', { class: 'section-sub' }, `Based on ${recCache.seeds.length} title${recCache.seeds.length === 1 ? '' : 's'} you liked`),
-      grid(recCache.top.slice(0, 8).map((c) => c.item), storedFor, openItem)
+      grid(visible(recCache.top.map((c) => c.item)).slice(0, 8), storedFor, openItem)
     );
 
     for (const rail of recCache.rails) {
@@ -157,7 +163,7 @@ async function renderHome(host) {
           { class: 'section-title' },
           `Because you liked ${displayTitle(rail.seed, rail.seed)}`
         ),
-        h('div', { class: 'rail' }, rail.items.map((i) => tile(i, storedFor(i), openItem)))
+        h('div', { class: 'rail' }, visible(rail.items).map((i) => tile(i, storedFor(i), openItem)))
       );
     }
   } else if (!seeds.length) {
@@ -171,7 +177,7 @@ async function renderHome(host) {
   }
 
   try {
-    const items = await trending();
+    const items = visible(await trending());
     sections.push(
       h('h2', { class: 'section-title' }, 'Trending this week'),
       grid(items.slice(0, 12), storedFor, openItem)

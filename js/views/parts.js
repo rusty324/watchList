@@ -109,8 +109,23 @@ export function scoresBlock(meta) {
 
 /* ---------- personal rating ---------- */
 
+/**
+ * The three verdicts, with the sentence each one stands for. The buttons only
+ * have room for the short label, so the caption below the row carries the
+ * meaning — particularly for "One and done", which is the whole point of having
+ * a middle option.
+ */
+export const RATING_LABELS = {
+  up: { short: 'Liked it', caption: 'Liked it — would happily watch again.' },
+  once: {
+    short: 'One and done',
+    caption: 'Glad you saw it — but not looking for a rewatch.',
+  },
+  down: { short: 'Not for me', caption: 'Not for me — steers recommendations away.' },
+};
+
 export function ratingRow(meta, onChange) {
-  const mk = (kind, label, iconName) =>
+  const mk = (kind) =>
     h(
       'button',
       {
@@ -123,34 +138,39 @@ export function ratingRow(meta, onChange) {
           onChange?.(next);
         },
       },
-      icon(iconName),
-      label
+      icon(kind),
+      h('span', {}, RATING_LABELS[kind].short)
     );
 
-  const up = mk('up', 'Liked it', 'up');
-  const down = mk('down', 'Not for me', 'down');
+  const buttons = { up: mk('up'), once: mk('once'), down: mk('down') };
+  const row = h('div', { class: 'rating-row' }, buttons.up, buttons.once, buttons.down);
+
+  const caption = h('span', { class: 'r-text' }, '');
   const clearBtn = h(
     'button',
     {
       type: 'button',
-      class: 'rating-btn clear',
-      'aria-label': 'Clear rating',
-      title: 'Clear rating',
+      class: 'link-btn',
       onclick: () => {
         clearRating(meta.type, meta.id);
         update();
         onChange?.(null);
       },
     },
-    icon('close')
+    'Clear'
   );
+  const captionRow = h('div', { class: 'rating-caption' }, caption, clearBtn);
 
-  const node = h('div', { class: 'rating-row' }, up, down, clearBtn);
+  const node = h('div', {}, row, captionRow);
 
   function update() {
     const r = getItem(meta.type, meta.id)?.rating || null;
-    up.setAttribute('aria-pressed', String(r === 'up'));
-    down.setAttribute('aria-pressed', String(r === 'down'));
+    for (const [kind, button] of Object.entries(buttons)) {
+      button.setAttribute('aria-pressed', String(r === kind));
+    }
+    caption.textContent = r
+      ? RATING_LABELS[r].caption
+      : 'Rate this to shape your recommendations.';
     clearBtn.hidden = !r;
   }
   update();
@@ -189,9 +209,10 @@ export function watchlistAction(meta, onChange) {
   return { node, update };
 }
 
-/* ---------- watched checkbox ---------- */
+/* ---------- checkbox row ---------- */
 
-export function watchedAction(label, isOn, setOn) {
+/** Generic labelled checkbox: used for watch marks and for Settings toggles. */
+export function checkboxAction(label, isOn, setOn) {
   const box = h('div', { class: 'box' }, icon('check'));
   const text = h('span', {}, label);
   const node = h(

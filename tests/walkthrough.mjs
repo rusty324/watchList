@@ -72,6 +72,44 @@ console.log('title after toggle ->', heroTitle);
 if (!/기생충/.test(heroTitle)) problems.push('language toggle did not switch to the original title');
 await shot('04-movie-original-title');
 
+// three rating buttons must fit one row at 390px without overflowing —
+// the layout risk in offering a middle verdict alongside the two thumbs
+const ratingRow = page.locator('.rating-row');
+const rowBox = await ratingRow.boundingBox();
+const btnBoxes = await Promise.all(
+  (await page.locator('.rating-btn').all()).map((b) => b.boundingBox())
+);
+console.log('rating buttons ->', btnBoxes.map((b) => `${Math.round(b.width)}x${Math.round(b.height)}`).join(' '));
+if (btnBoxes.length !== 3) problems.push(`expected 3 rating buttons, found ${btnBoxes.length}`);
+if (new Set(btnBoxes.map((b) => Math.round(b.y))).size !== 1) {
+  problems.push('rating buttons wrapped onto more than one row');
+}
+for (const b of btnBoxes) {
+  if (b.x < rowBox.x - 1 || b.x + b.width > rowBox.x + rowBox.width + 1) {
+    problems.push('a rating button overflows the row');
+  }
+}
+
+// the middle rating, and the caption that carries its meaning
+await page.click('.rating-btn.once');
+await page.waitForTimeout(250);
+const onceCaption = await page.textContent('.rating-caption .r-text');
+console.log('caption after "one and done" ->', onceCaption);
+if (!/rewatch/i.test(onceCaption)) {
+  problems.push(`"one and done" caption did not explain itself: "${onceCaption}"`);
+}
+if ((await page.getAttribute('.rating-btn.once', 'aria-pressed')) !== 'true') {
+  problems.push('"one and done" did not register as selected');
+}
+await shot('05a-movie-one-and-done');
+
+// tapping it again clears back to no rating
+await page.click('.rating-btn.once');
+await page.waitForTimeout(250);
+if ((await page.getAttribute('.rating-btn.once', 'aria-pressed')) !== 'false') {
+  problems.push('tapping "one and done" a second time did not clear it');
+}
+
 // rate + watched + watchlist
 await page.click('.rating-btn.up');
 await page.click('.action-row .action:not(.primary)');
@@ -161,7 +199,7 @@ await page.goBack();
 await page.waitForTimeout(600);
 
 /* ---- 7. seed a few more ratings for the lists + recs ---- */
-for (const [query, rating] of [['squid', 'up'], ['spirited', 'up'], ['pulp', 'down']]) {
+for (const [query, rating] of [['squid', 'up'], ['spirited', 'once'], ['pulp', 'down']]) {
   await page.fill('input[type="search"]', query);
   await page.waitForTimeout(700);
   await page.click('.grid .tile');
@@ -196,10 +234,59 @@ await page.click('.chips .chip:nth-child(2)'); // Watchlist
 await page.waitForTimeout(400);
 await shot('17-lists-watchlist');
 
-/* ---- 10. settings ---- */
+/* ---- 10. hiding "not for me" titles ---- */
+
+const chip = (name) => page.locator('.chips .chip', { hasText: name });
+const listedTitles = () => page.locator('.grid .tile .t-name').allTextContents();
+
+await chip('All').click();
+await page.selectOption('.sortbar select', 'title');
+await page.waitForTimeout(400);
+const before = await listedTitles();
+console.log('lists before hiding ->', before.join(', '));
+if (!before.includes('Pulp Fiction')) {
+  problems.push('the disliked title was missing before hiding was even enabled');
+}
+
+// flip the setting
 await page.click('.icon-btn[aria-label="Settings"]');
 await page.waitForTimeout(700);
+await page.locator('.sheet button.action', { hasText: 'Not for me' }).click();
+await page.waitForTimeout(300);
 await shot('18-settings');
+await page.goBack();
+await page.waitForTimeout(700);
+
+const after = await listedTitles();
+console.log('lists after hiding ->', after.join(', '));
+if (after.includes('Pulp Fiction')) problems.push('the disliked title is still listed after hiding');
+if (after.length !== before.length - 1) {
+  problems.push(`expected exactly one title hidden, went from ${before.length} to ${after.length}`);
+}
+await shot('19-lists-hiding-disliked');
+
+// the escape hatch must still reach it
+await chip('Not for me').click();
+await page.waitForTimeout(400);
+const escaped = await listedTitles();
+console.log('"not for me" chip ->', escaped.join(', '));
+if (!escaped.includes('Pulp Fiction')) {
+  problems.push('the "Not for me" filter did not reveal the hidden title');
+}
+await shot('20-lists-not-for-me-chip');
+
+// and the middle rating carries its badge through to the list
+await chip('One and done').click();
+await page.waitForTimeout(400);
+const onceListed = await listedTitles();
+console.log('"one and done" chip ->', onceListed.join(', '));
+if (!onceListed.includes('Spirited Away')) {
+  problems.push('the "One and done" filter did not list the title rated that way');
+}
+if (!(await page.locator('.grid .tile .badge.once').count())) {
+  problems.push('the "one and done" tile badge is missing');
+}
+await shot('21-lists-one-and-done');
 
 /* ---- 11. light mode pass ---- */
 await context.close();
@@ -214,12 +301,14 @@ const lp = await light.newPage();
 lp.on('pageerror', (e) => problems.push(`pageerror(light): ${e.message}`));
 await lp.goto(BASE, { waitUntil: 'networkidle' });
 await lp.waitForTimeout(900);
-await lp.screenshot({ path: `${OUT}/19-light-browse.png` });
+await lp.screenshot({ path: `${OUT}/22-light-browse.png` });
 await lp.fill('input[type="search"]', 'squid');
 await lp.waitForTimeout(700);
 await lp.click('.grid .tile');
 await lp.waitForTimeout(900);
-await lp.screenshot({ path: `${OUT}/20-light-tv.png` });
+await lp.click('.rating-btn.once');
+await lp.waitForTimeout(250);
+await lp.screenshot({ path: `${OUT}/23-light-tv.png` });
 
 await browser.close();
 

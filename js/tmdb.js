@@ -212,7 +212,7 @@ export async function search(query, page = 1) {
   if (!q) return [];
   const [data, genres] = await Promise.all([
     cached(`search:${q}:${page}`, TTL.search, () =>
-      request('/search/multi', { query: q, page, include_adult: 'false' })
+      request('/search/multi', { query: q, page, include_adult: 'true' })
     ),
     genreMap().catch(() => ({})),
   ]);
@@ -410,7 +410,7 @@ export async function discoverByGenre(type, genreId, { page = 1 } = {}) {
       request(`/discover/${type}`, {
         with_genres: genreId,
         sort_by: 'popularity.desc',
-        include_adult: 'false',
+        include_adult: 'true',
         'vote_count.gte': type === 'movie' ? 200 : 50,
         page,
       })

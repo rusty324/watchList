@@ -3,6 +3,7 @@
 
 import { posterUrl } from './tmdb.js';
 import { state, tvProgress } from './store.js';
+import { armRatingGesture, tapWasSwallowed } from './longpress.js';
 
 /* ---------- hyperscript ---------- */
 
@@ -107,7 +108,8 @@ export function posterBox(item, size = 'w185') {
   const box = h('div', { class: 'poster' });
   if (url) {
     box.append(
-      h('img', { src: url, alt: '', loading: 'lazy', decoding: 'async' })
+      // draggable=false stops iOS starting an image drag during a long-press.
+      h('img', { src: url, alt: '', loading: 'lazy', decoding: 'async', draggable: 'false' })
     );
   } else {
     box.append(h('div', { class: 'ph' }, item.title || ''));
@@ -136,18 +138,27 @@ export function tile(item, stored, onOpen) {
     }
   }
 
-  return h(
+  const node = h(
     'button',
     {
       class: 'tile',
       type: 'button',
-      onclick: () => onOpen(item),
+      onclick: () => {
+        // A long-press ends in a click too; that one shouldn't also open the
+        // sheet on top of the rating the user just set.
+        if (tapWasSwallowed()) return;
+        onOpen(item);
+      },
       'aria-label': `${displayTitle(item, stored)}, ${metaLine(item)}`,
     },
     box,
     h('div', { class: 't-name' }, displayTitle(item, stored)),
     h('div', { class: 't-meta' }, metaLine(item))
   );
+
+  // People have no rating; everything else can be rated by press-and-hold.
+  if (item.type !== 'person') armRatingGesture(node, item);
+  return node;
 }
 
 export function grid(items, storedFor, onOpen) {

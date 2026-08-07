@@ -127,6 +127,23 @@ your Lists and out of Trending. Searching by name still finds them, and the
 "Not for me" filter chip on the Lists tab always shows them — so a rating you
 hide is never a rating you can't undo.
 
+### Rating without opening anything
+
+**Press and hold a poster for about half a second**, then slide onto one of the
+three verdicts that appear above it and let go. Release anywhere else and
+nothing happens. Dragging onto the verdict already set clears it, the same as
+tapping it twice in the detail sheet does.
+
+Works on every poster grid — Browse, Genres and Lists. Anime tiles from the
+AniList grid have no TMDB id until they're opened, so releasing on an option
+looks up the match first and tells you if there isn't one.
+
+Two things it deliberately doesn't do. There's **no haptic tap**: WebKit never
+shipped the Vibration API, so the feedback is visual. And it has **no keyboard
+equivalent** — a long-press can't have one — so it's an accelerator rather than
+a new capability; the detail sheet's rating row offers the same three verdicts
+to everyone.
+
 ### When something stops working
 
 **Settings → Diagnostics → Check connections** pings TMDB, OMDb and AniList and

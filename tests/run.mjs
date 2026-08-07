@@ -42,6 +42,12 @@ function setLanguage(language) {
 }
 setLanguage('en-US');
 
+// ui.js registers a popstate listener at module scope, and importing the
+// press-and-hold helpers pulls it in. No-ops are enough: nothing under test
+// dispatches events.
+globalThis.addEventListener = () => {};
+globalThis.removeEventListener = () => {};
+
 const store = await import('../js/store.js');
 const tmdb = await import('../js/tmdb.js');
 const sortMod = await import('../js/sort.js');
@@ -51,6 +57,7 @@ const omdb = await import('../js/omdb.js');
 const genres = await import('../js/genres.js');
 const anilist = await import('../js/anilist.js');
 const diag = await import('../js/diagnostics.js');
+const lp = await import('../js/longpress.js');
 
 function resetStore() {
   for (const key of Object.keys(store.state.items)) delete store.state.items[key];
@@ -812,6 +819,74 @@ test('missing scores parse to null rather than a fake number', () => {
   assert.deepEqual(omdb.parseOmdb({ imdbRating: 'N/A', Ratings: [] }), { imdb: null, rt: null });
   assert.deepEqual(omdb.parseOmdb({ Response: 'False' }), { imdb: null, rt: null });
   assert.equal(omdb.parseRotten(undefined), null);
+});
+
+/* ---------- press-and-hold rating ---------- */
+
+const VIEWPORT = { width: 390, height: 844 };
+const POP = { width: 240, height: 68 };
+
+test('the rating options sit above the poster when there is room', () => {
+  const tile = { top: 400, bottom: 640, left: 100, right: 280, width: 180 };
+  const spot = lp.placePopover(tile, POP, VIEWPORT);
+  assert.equal(spot.placement, 'above');
+  assert.equal(spot.y, 400 - 10 - POP.height);
+  // Centred on the tile.
+  assert.equal(spot.x, 100 + 90 - POP.width / 2);
+});
+
+test('they flip below a poster too near the top to fit above', () => {
+  const tile = { top: 20, bottom: 260, left: 100, right: 280, width: 180 };
+  const spot = lp.placePopover(tile, POP, VIEWPORT);
+  assert.equal(spot.placement, 'below');
+  assert.equal(spot.y, 270);
+});
+
+test('they stay on screen for tiles in the edge columns', () => {
+  // Left column: centring would put x negative.
+  const left = lp.placePopover(
+    { top: 400, bottom: 640, left: 0, right: 180, width: 180 }, POP, VIEWPORT
+  );
+  assert.equal(left.x, 8);
+
+  // Right column: centring would run off the right edge.
+  const right = lp.placePopover(
+    { top: 400, bottom: 640, left: 210, right: 390, width: 180 }, POP, VIEWPORT
+  );
+  assert.equal(right.x, VIEWPORT.width - POP.width - 8);
+});
+
+test('a very tall popover is still pinned inside the viewport', () => {
+  const spot = lp.placePopover(
+    { top: 10, bottom: 800, left: 100, right: 280, width: 180 },
+    { width: 240, height: 200 },
+    VIEWPORT
+  );
+  assert.ok(spot.y + 200 <= VIEWPORT.height, `bottom ${spot.y + 200} exceeds viewport`);
+});
+
+test('the option under the finger is the one that gets picked', () => {
+  const rects = [
+    { kind: 'up', rect: { left: 0, right: 70, top: 0, bottom: 56 } },
+    { kind: 'once', rect: { left: 80, right: 150, top: 0, bottom: 56 } },
+    { kind: 'down', rect: { left: 160, right: 230, top: 0, bottom: 56 } },
+  ];
+  assert.equal(lp.pickOption({ x: 35, y: 28 }, rects), 'up');
+  assert.equal(lp.pickOption({ x: 115, y: 28 }, rects), 'once');
+  assert.equal(lp.pickOption({ x: 200, y: 28 }, rects), 'down');
+  // In the gap between two options, and far away: no selection, so releasing
+  // there cancels rather than picking something at random.
+  assert.equal(lp.pickOption({ x: 75, y: 28 }, rects), null);
+  assert.equal(lp.pickOption({ x: 35, y: 300 }, rects), null);
+  assert.equal(lp.pickOption({ x: 35, y: 28 }, []), null);
+});
+
+test('a small wobble is a hold, a real drag is a scroll', () => {
+  const start = { x: 100, y: 100 };
+  assert.equal(lp.movedTooFar(start, { x: 103, y: 104 }), false);
+  assert.equal(lp.movedTooFar(start, { x: 100, y: 130 }), true);
+  // Diagonal movement counts too — it's a distance, not per-axis.
+  assert.equal(lp.movedTooFar(start, { x: 109, y: 109 }), true);
 });
 
 /* ---------- diagnostics ---------- */

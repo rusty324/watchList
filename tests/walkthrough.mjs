@@ -344,6 +344,99 @@ if (!(await page.locator('.grid .tile .badge.once').count())) {
 }
 await shot('21-lists-one-and-done');
 
+/* ---- 10a. press and hold a tile to rate it ---- */
+await page.click('.tab[data-tab="browse"]');
+await page.waitForTimeout(700);
+await page.fill('input[type="search"]', 'grand');
+await page.waitForTimeout(900);
+
+const holdTarget = page.locator('.grid .tile').first();
+const heldName = await holdTarget.locator('.t-name').textContent();
+
+async function press(ms) {
+  const box = await holdTarget.boundingBox();
+  const from = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+  await page.mouse.move(from.x, from.y);
+  await page.mouse.down();
+  await page.waitForTimeout(ms);
+  return from;
+}
+
+async function dragToOption(kind) {
+  const opt = await page.locator(`.rate-opt[data-kind="${kind}"]`).boundingBox();
+  await page.mouse.move(opt.x + opt.width / 2, opt.y + opt.height / 2, { steps: 6 });
+  await page.waitForTimeout(150);
+}
+
+// a quick tap still opens the sheet
+await press(120);
+await page.mouse.up();
+await page.waitForTimeout(700);
+if (!(await page.locator('.sheet').count())) {
+  problems.push('a short tap no longer opens the detail sheet');
+}
+await page.goBack();
+await page.waitForTimeout(700);
+
+// moving before the hold completes is a scroll, not a press
+await press(200);
+const startBox = await holdTarget.boundingBox();
+await page.mouse.move(startBox.x + startBox.width / 2, startBox.y + startBox.height / 2 - 40, { steps: 4 });
+await page.waitForTimeout(500);
+if (await page.locator('.rate-pop.in').count()) {
+  problems.push('the rating options opened even though the pointer was dragging (scrolling)');
+}
+await page.mouse.up();
+await page.waitForTimeout(600);
+// With a mouse, drag-and-release inside a button still fires a click, so the
+// sheet opens. A finger doing the same thing would have scrolled instead.
+if (await page.locator('.sheet').count()) {
+  await page.goBack();
+  await page.waitForTimeout(700);
+}
+
+// hold, drag onto "Liked it", release
+await press(650);
+if (!(await page.locator('.rate-pop.in').count())) {
+  problems.push('press and hold did not open the rating options');
+}
+await shot('21a-longpress-open');
+await dragToOption('up');
+const highlighted = await page.locator('.rate-opt.on').getAttribute('data-kind');
+console.log('highlighted option ->', highlighted);
+if (highlighted !== 'up') problems.push(`wrong option highlighted: ${highlighted}`);
+await page.mouse.up();
+await page.waitForTimeout(900);
+
+console.log('held tile ->', heldName);
+if (!(await page.locator('.grid .tile').first().locator('.badge.up').count())) {
+  problems.push('the long-press rating did not stick');
+}
+// The click that follows release must not also open the sheet.
+if (await page.locator('.sheet').count()) {
+  problems.push('the detail sheet opened after a long-press rating');
+}
+await shot('21b-longpress-rated');
+
+// dragging onto the same verdict again clears it
+await press(650);
+await dragToOption('up');
+await page.mouse.up();
+await page.waitForTimeout(900);
+if (await page.locator('.grid .tile').first().locator('.badge.up').count()) {
+  problems.push('dragging onto the active verdict did not clear it');
+}
+
+// releasing away from the options rates nothing
+await press(650);
+const away = await holdTarget.boundingBox();
+await page.mouse.move(away.x + away.width / 2, away.y + away.height - 4, { steps: 4 });
+await page.mouse.up();
+await page.waitForTimeout(700);
+if (await page.locator('.grid .tile').first().locator('.badge').count()) {
+  problems.push('releasing away from the options still applied a rating');
+}
+
 /* ---- 11. genres tab ---- */
 const tabLabels = await page.locator('.tab span').allTextContents();
 console.log('tabs ->', tabLabels.join(' | '));

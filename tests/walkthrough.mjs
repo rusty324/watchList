@@ -344,6 +344,99 @@ if (!(await page.locator('.grid .tile .badge.once').count())) {
 }
 await shot('21-lists-one-and-done');
 
+/* ---- 10a. press and hold a tile to rate it ---- */
+await page.click('.tab[data-tab="browse"]');
+await page.waitForTimeout(700);
+await page.fill('input[type="search"]', 'grand');
+await page.waitForTimeout(900);
+
+const holdTarget = page.locator('.grid .tile').first();
+const heldName = await holdTarget.locator('.t-name').textContent();
+
+async function press(ms) {
+  const box = await holdTarget.boundingBox();
+  const from = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+  await page.mouse.move(from.x, from.y);
+  await page.mouse.down();
+  await page.waitForTimeout(ms);
+  return from;
+}
+
+async function dragToOption(kind) {
+  const opt = await page.locator(`.rate-opt[data-kind="${kind}"]`).boundingBox();
+  await page.mouse.move(opt.x + opt.width / 2, opt.y + opt.height / 2, { steps: 6 });
+  await page.waitForTimeout(150);
+}
+
+// a quick tap still opens the sheet
+await press(120);
+await page.mouse.up();
+await page.waitForTimeout(700);
+if (!(await page.locator('.sheet').count())) {
+  problems.push('a short tap no longer opens the detail sheet');
+}
+await page.goBack();
+await page.waitForTimeout(700);
+
+// moving before the hold completes is a scroll, not a press
+await press(200);
+const startBox = await holdTarget.boundingBox();
+await page.mouse.move(startBox.x + startBox.width / 2, startBox.y + startBox.height / 2 - 40, { steps: 4 });
+await page.waitForTimeout(500);
+if (await page.locator('.rate-pop.in').count()) {
+  problems.push('the rating options opened even though the pointer was dragging (scrolling)');
+}
+await page.mouse.up();
+await page.waitForTimeout(600);
+// With a mouse, drag-and-release inside a button still fires a click, so the
+// sheet opens. A finger doing the same thing would have scrolled instead.
+if (await page.locator('.sheet').count()) {
+  await page.goBack();
+  await page.waitForTimeout(700);
+}
+
+// hold, drag onto "Liked it", release
+await press(650);
+if (!(await page.locator('.rate-pop.in').count())) {
+  problems.push('press and hold did not open the rating options');
+}
+await shot('21a-longpress-open');
+await dragToOption('up');
+const highlighted = await page.locator('.rate-opt.on').getAttribute('data-kind');
+console.log('highlighted option ->', highlighted);
+if (highlighted !== 'up') problems.push(`wrong option highlighted: ${highlighted}`);
+await page.mouse.up();
+await page.waitForTimeout(900);
+
+console.log('held tile ->', heldName);
+if (!(await page.locator('.grid .tile').first().locator('.badge.up').count())) {
+  problems.push('the long-press rating did not stick');
+}
+// The click that follows release must not also open the sheet.
+if (await page.locator('.sheet').count()) {
+  problems.push('the detail sheet opened after a long-press rating');
+}
+await shot('21b-longpress-rated');
+
+// dragging onto the same verdict again clears it
+await press(650);
+await dragToOption('up');
+await page.mouse.up();
+await page.waitForTimeout(900);
+if (await page.locator('.grid .tile').first().locator('.badge.up').count()) {
+  problems.push('dragging onto the active verdict did not clear it');
+}
+
+// releasing away from the options rates nothing
+await press(650);
+const away = await holdTarget.boundingBox();
+await page.mouse.move(away.x + away.width / 2, away.y + away.height - 4, { steps: 4 });
+await page.mouse.up();
+await page.waitForTimeout(700);
+if (await page.locator('.grid .tile').first().locator('.badge').count()) {
+  problems.push('releasing away from the options still applied a rating');
+}
+
 /* ---- 11. genres tab ---- */
 const tabLabels = await page.locator('.tab span').allTextContents();
 console.log('tabs ->', tabLabels.join(' | '));
@@ -388,7 +481,40 @@ console.log('anime ->', animeTitles.join(', '));
 if (!animeTitles.includes('Attack on Titan')) {
   problems.push(`AniList-sourced anime results missing: ${animeTitles.join('|')}`);
 }
+// AniList lists each cour separately; the tile must show the show once.
+if (animeTitles.some((t) => /season\s*\d|final season/i.test(t))) {
+  problems.push(`a later cour was listed as its own show: ${animeTitles.join('|')}`);
+}
+if (animeTitles.filter((t) => /^Attack on Titan/.test(t)).length !== 1) {
+  problems.push(`Attack on Titan listed ${animeTitles.filter((t) => /^Attack on Titan/.test(t)).length} times`);
+}
+// ...but a film that follows a series has its own TMDB entry and must survive.
+if (!animeTitles.some((t) => /Mugen Train/.test(t))) {
+  problems.push('a sequel film was collapsed away along with the cours');
+}
 await shot('24-genres-anime');
+
+/* an anime with no TMDB match gets a read-only AniList sheet, not a dead end */
+await page.locator('.grid .tile', { hasText: 'Yofukashi' }).first().click();
+await page.waitForTimeout(1400);
+const noTmdbBody = await page.locator('.sheet-body').innerText();
+console.log('no-TMDB sheet ->', noTmdbBody.split('\n').slice(0, 6).join(' / '));
+if (!/Not on TMDB/.test(noTmdbBody)) {
+  problems.push('the AniList-only sheet does not explain why the title cannot be tracked');
+}
+if (!/Studio Nowhere/.test(noTmdbBody)) {
+  problems.push('the AniList-only sheet is missing the AniList metadata');
+}
+if (!(await page.locator('.sheet-body a[href*="anilist.co"]').count())) {
+  problems.push('the AniList-only sheet has no link out to AniList');
+}
+// It must not offer tracking controls it cannot honour.
+if (await page.locator('.sheet-body .rating-btn').count()) {
+  problems.push('the AniList-only sheet offers rating controls it cannot store');
+}
+await shot('24a-anime-no-tmdb');
+await page.goBack();
+await page.waitForTimeout(700);
 
 // the movie/TV filter narrows to one format
 await page.locator('.chips .chip', { hasText: 'Movies' }).first().click();
@@ -439,9 +565,44 @@ if (!(await page.locator('.hero .genres .g-tag').count())) {
 }
 await shot('26-anime-enriched');
 
-// a non-anime sheet must be untouched by all of this
-await page.goBack();
+/* tapping an AniList tag opens an anime browse for it */
+const tagName = await page.locator('.hero .genres .g-tag').first().textContent();
+await page.locator('.hero .genres .g-tag').first().click();
+await page.waitForTimeout(1400);
+const tagHeading = await page.locator('.genre-head h1').textContent();
+console.log(`tag "${tagName}" -> heading "${tagHeading}"`);
+if (tagHeading.trim() !== tagName.trim()) {
+  problems.push(`tag browse heading wrong: "${tagHeading}" for tag "${tagName}"`);
+}
+if (!(await page.locator('.grid .tile').count())) {
+  problems.push('the AniList tag browse returned nothing');
+}
+await shot('26a-tag-browse');
+
+/* tapping a genre chip opens that genre, with the medium carried over */
+await page.click('.tab[data-tab="browse"]');
 await page.waitForTimeout(600);
+await page.fill('input[type="search"]', 'breaking');
+await page.waitForTimeout(800);
+await page.click('.grid .tile');
+await page.waitForTimeout(1200);
+const chipHref = await page.locator('.hero .genres .g-link').first().getAttribute('href');
+console.log('tv genre chip href ->', chipHref);
+if (!/^#\/genres\/[a-z]+\/tv$/.test(chipHref)) {
+  problems.push(`a TV sheet's genre chip did not carry the medium: ${chipHref}`);
+}
+await page.locator('.hero .genres .g-link').first().click();
+await page.waitForTimeout(1400);
+const tvChipPressed = await page.locator('.chips .chip[data-type="tv"]').getAttribute('aria-pressed');
+console.log('TV chip preselected ->', tvChipPressed);
+if (tvChipPressed !== 'true') {
+  problems.push('the genre opened from a TV sheet did not preselect the TV filter');
+}
+await shot('26b-genre-from-chip');
+
+// a non-anime sheet must be untouched by all of this
+await page.click('.tab[data-tab="browse"]');
+await page.waitForTimeout(700);
 await page.fill('input[type="search"]', 'princess');
 await page.waitForTimeout(800);
 await page.click('.grid .tile');

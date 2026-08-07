@@ -280,7 +280,16 @@ svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; 
 .rail > * { scroll-snap-align: start; }
 @media (min-width: 560px) { .rail { grid-auto-columns: 190px; } }
 
-.tile { display: block; text-align: left; width: 100%; }
+.tile {
+  display: block; text-align: left; width: 100%;
+  /* Without these, a press-and-hold raises iOS's own copy/share callout and
+   * image preview over the rating options. */
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.tile img { -webkit-user-drag: none; }
+.tile.pressing .poster { transform: scale(0.94); }
 
 /* Must be positioned everywhere it appears: the .ph fallback inside is
  * absolutely positioned and would otherwise escape to the nearest ancestor. */
@@ -427,7 +436,8 @@ svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; 
 .hero .alt-title { margin: 4px 0 0; font-size: 14px; color: var(--fg-dim); }
 .hero .facts { margin: 8px 0 0; font-size: 13.5px; color: var(--fg-dim); }
 .hero .genres { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 5px; }
-.hero .genres span {
+/* Matches both the plain <span> chips and the <a> ones that link to a genre. */
+.hero .genres > * {
   padding: 3px 8px; border-radius: 999px;
   background: var(--bg-sunk); color: var(--fg-dim);
   font-size: 11.5px; font-weight: 600;
@@ -437,6 +447,12 @@ svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; 
   background: color-mix(in srgb, var(--anilist) 16%, var(--bg-sunk));
   color: color-mix(in srgb, var(--anilist) 70%, var(--fg));
 }
+/* Tappable chips get a faint outline; the ones that can't be browsed stay flat,
+ * so there's a visible difference rather than a link that goes nowhere. */
+.hero .genres .g-link {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 32%, transparent);
+}
+.hero .genres .g-link:active { opacity: 0.6; }
 
 .lang-toggle {
   display: inline-flex;
@@ -760,6 +776,63 @@ svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; 
   animation: spin 0.7s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* ---------- press-and-hold rating ---------- */
+
+.rate-pop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 45;
+  display: flex;
+  gap: 6px;
+  padding: 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg-elev) 94%, transparent);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.34), inset 0 0 0 1px var(--line);
+  opacity: 0;
+  visibility: hidden;
+  transform-origin: center bottom;
+  scale: 0.86;
+  transition: opacity 0.14s ease, scale 0.16s var(--ease), visibility 0.16s;
+  pointer-events: none; /* the finger is captured; never intercept taps */
+}
+.rate-pop.in { opacity: 1; visibility: visible; scale: 1; }
+.rate-pop[data-placement='below'] { transform-origin: center top; }
+
+.rate-opt {
+  min-width: 72px;
+  min-height: 56px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 6px 8px;
+  border-radius: 999px;
+  color: var(--fg-dim);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.15;
+  text-align: center;
+  transition: scale 0.12s var(--ease), background 0.12s ease;
+}
+.rate-opt svg { width: 20px; height: 20px; }
+
+/* The verdict already set, so dragging onto it reads as "clear this". */
+.rate-opt.current { box-shadow: inset 0 0 0 1.5px currentColor; }
+
+/* Whatever the finger is currently over. */
+.rate-opt.on { scale: 1.12; color: var(--accent-fg); }
+.rate-opt.on.up { background: var(--up); }
+.rate-opt.on.once { background: var(--once); }
+.rate-opt.on.down { background: var(--down); }
+
+@media (prefers-reduced-motion: reduce) {
+  .rate-pop, .rate-opt, .tile.pressing .poster { transition: none; scale: 1; }
+}
 
 .toast {
   position: fixed;

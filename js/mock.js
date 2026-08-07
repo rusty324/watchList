@@ -368,6 +368,52 @@ const ANILIST = [
     studios: { nodes: [{ name: 'ufotable' }] },
     tags: [{ name: 'Swordplay', rank: 85, isGeneralSpoiler: false }],
   },
+  // A later cour: AniList lists it separately, TMDB folds it into the one show.
+  // Must not appear in the Anime tile.
+  {
+    id: 20958,
+    title: { romaji: 'Shingeki no Kyojin Season 2', english: 'Attack on Titan Season 2', native: '進撃の巨人 Season2' },
+    format: 'TV',
+    episodes: 12,
+    seasonYear: 2017,
+    averageScore: 84,
+    genres: ['Action', 'Drama'],
+    description: 'The fight against the titans continues.',
+    coverImage: { large: '' },
+    studios: { nodes: [{ name: 'Wit Studio' }] },
+    tags: [{ name: 'Survival', rank: 88, isGeneralSpoiler: false }],
+    relations: { edges: [{ relationType: 'PREQUEL', node: { id: 16498, type: 'ANIME', format: 'TV' } }] },
+  },
+  // A film following a series: also has a TV prequel, but has its own TMDB
+  // entry, so collapsing must NOT drop it.
+  {
+    id: 112151,
+    title: { romaji: 'Kimetsu no Yaiba: Mugen Ressha-hen', english: 'Demon Slayer: Mugen Train', native: '劇場版 鬼滅の刃 無限列車編' },
+    format: 'MOVIE',
+    episodes: 1,
+    seasonYear: 2020,
+    averageScore: 83,
+    genres: ['Action', 'Fantasy'],
+    description: 'Tanjiro and the Flame Hashira board a train haunted by a demon.',
+    coverImage: { large: '' },
+    studios: { nodes: [{ name: 'ufotable' }] },
+    tags: [{ name: 'Swordplay', rank: 82, isGeneralSpoiler: false }],
+    relations: { edges: [{ relationType: 'PREQUEL', node: { id: 101922, type: 'ANIME', format: 'TV' } }] },
+  },
+  // Nothing on TMDB matches this: exercises the AniList-only sheet.
+  {
+    id: 999001,
+    title: { romaji: 'Yofukashi no Nazonazo', english: '', native: '夜更かしのなぞなぞ' },
+    format: 'ONA',
+    episodes: 12,
+    seasonYear: 2024,
+    averageScore: 68,
+    genres: ['Comedy'],
+    description: 'A short-form riddle series with no TMDB entry.',
+    coverImage: { large: '' },
+    studios: { nodes: [{ name: 'Studio Nowhere' }] },
+    tags: [{ name: 'Episodic', rank: 75, isGeneralSpoiler: false }],
+  },
 ];
 
 const REGIONS = [
@@ -531,7 +577,10 @@ export function mockAnilist(query, variables = {}) {
 
   if (/Page\s*\(/.test(query)) {
     const formats = variables.format_in || [];
-    const media = ANILIST.filter((m) => !formats.length || formats.includes(m.format));
+    let media = ANILIST.filter((m) => !formats.length || formats.includes(m.format));
+    if (variables.tag) {
+      media = media.filter((m) => (m.tags || []).some((t) => t.name === variables.tag));
+    }
     return delay({ Page: { media } });
   }
 

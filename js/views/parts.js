@@ -7,6 +7,7 @@
 
 import { h, icon, posterBox, displayTitle, toast } from '../ui.js';
 import { profileUrl, posterUrl } from '../tmdb.js';
+import { genreKeyFromName } from '../genres.js';
 import {
   state,
   getItem,
@@ -64,11 +65,25 @@ export function heroBlock(meta, { onLangChange, facts }) {
       altEl,
       h('p', { class: 'facts' }, facts),
       meta.genres?.length
-        ? h('div', { class: 'genres' }, meta.genres.map((g) => h('span', {}, g)))
+        ? h('div', { class: 'genres' }, meta.genres.map((g) => genreChip(g, meta.type)))
         : null,
       toggle
     )
   );
+}
+
+/**
+ * A genre chip, linked to that genre in the Genres tab when we can browse it.
+ *
+ * The medium carries over, so a TV show's "Drama" opens Drama already filtered
+ * to TV. Names that don't map to a browsable genre stay plain text rather than
+ * becoming a link that goes nowhere.
+ */
+export function genreChip(name, mediaType) {
+  const key = genreKeyFromName(name);
+  if (!key) return h('span', {}, name);
+  const suffix = mediaType === 'movie' || mediaType === 'tv' ? `/${mediaType}` : '';
+  return h('a', { class: 'g-link', href: `#/genres/${key}${suffix}` }, name);
 }
 
 function titlePrefOf(stored) {

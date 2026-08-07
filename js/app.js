@@ -27,8 +27,10 @@ let dirty = false;
  * back gesture return to the genre grid rather than leaving the tab.
  */
 function parseRoute() {
-  const [name, sub] = location.hash.replace(/^#\/?/, '').split('?')[0].split('/');
-  return { name: ROUTES[name] ? name : 'browse', sub: sub || null };
+  const [name, ...rest] = location.hash.replace(/^#\/?/, '').split('?')[0].split('/');
+  // The remainder is handed on whole: the Genres tab uses it for both the genre
+  // key and an optional preselected medium (#/genres/drama/tv).
+  return { name: ROUTES[name] ? name : 'browse', sub: rest.length ? rest : null };
 }
 
 function render() {

@@ -34,11 +34,28 @@ const MEDIA_FIELDS = `
   tags { name rank isGeneralSpoiler }
 `;
 
+// Only needed when browsing, to spot later cours — see isContinuation.
+const RELATION_FIELDS = `
+  relations { edges { relationType node { id type format } } }
+`;
+
 const BROWSE_QUERY = `
   query ($page: Int, $perPage: Int, $format_in: [MediaFormat]) {
     Page(page: $page, perPage: $perPage) {
       media(type: ANIME, sort: POPULARITY_DESC, isAdult: false, format_in: $format_in) {
         ${MEDIA_FIELDS}
+        ${RELATION_FIELDS}
+      }
+    }
+  }
+`;
+
+const TAG_QUERY = `
+  query ($page: Int, $perPage: Int, $tag: String, $format_in: [MediaFormat]) {
+    Page(page: $page, perPage: $perPage) {
+      media(type: ANIME, sort: POPULARITY_DESC, isAdult: false, tag: $tag, format_in: $format_in) {
+        ${MEDIA_FIELDS}
+        ${RELATION_FIELDS}
       }
     }
   }
@@ -87,6 +104,69 @@ function formatsFor(type) {
   return [...MOVIE_FORMATS, ...TV_FORMATS];
 }
 
+/* ---------- collapsing split seasons ---------- */
+
+const SERIAL_FORMATS = new Set(['TV', 'TV_SHORT', 'ONA']);
+
+/**
+ * Whether an entry is a later cour of a series already in the list.
+ *
+ * AniList gives each cour its own Media entry — "Shingeki no Kyojin", "…Season
+ * 2", "…The Final Season" — while TMDB models the whole thing as one show with
+ * four seasons. Listing them separately duplicates what the season dropdown
+ * already does, and the extra entries mostly fail to resolve to TMDB at all.
+ *
+ * The format check applies to BOTH sides on purpose: a film that follows a
+ * series (Demon Slayer's Mugen Train) has a TV prequel but is genuinely its own
+ * TMDB entry, so it has to survive. Only a serial whose prequel is also a
+ * serial is a continuation.
+ */
+export function isContinuation(media) {
+  if (!SERIAL_FORMATS.has(media?.format)) return false;
+  return (media.relations?.edges || []).some(
+    (edge) =>
+      edge?.relationType === 'PREQUEL' &&
+      edge.node?.type === 'ANIME' &&
+      SERIAL_FORMATS.has(edge.node?.format)
+  );
+}
+
+export function collapseSeasons(mediaList) {
+  return (mediaList || []).filter((media) => !isContinuation(media));
+}
+
+/**
+ * Drop the season marker from a title so it can be matched against TMDB, which
+ * names the show once and counts seasons separately.
+ *
+ * Bare trailing digits are deliberately left alone: "Steins;Gate 0" and "Mobile
+ * Suit Gundam 00" are titles, not season numbers.
+ */
+export function stripSeasonMarkers(title) {
+  let out = String(title || '');
+  const patterns = [
+    /\s*[:\-–]?\s*(the\s+)?final\s+season\s*$/i,
+    /\s*[:\-–]?\s*season\s+\d+\s*$/i,
+    /\s*[:\-–]?\s*\d+(st|nd|rd|th)\s+season\s*$/i,
+    /\s*[:\-–]?\s*part\s+\d+\s*$/i,
+    /\s*[:\-–]?\s*cour\s+\d+\s*$/i,
+    // Roman numerals only, and only as a whole trailing token (Mob Psycho 100 II).
+    /\s+(II|III|IV|V|VI|VII|VIII|IX|X)\s*$/,
+  ];
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const pattern of patterns) {
+      const next = out.replace(pattern, '');
+      if (next !== out && next.trim()) {
+        out = next.trim();
+        changed = true;
+      }
+    }
+  }
+  return out.trim();
+}
+
 /** AniList descriptions carry a little HTML even with asHtml:false. */
 function stripHtml(text) {
   return String(text || '')
@@ -116,6 +196,10 @@ export function normalizeAnime(media) {
     id: `al${media.id}`,
     title: primary || 'Untitled',
     originalTitle: original || '',
+    // Kept separately from originalTitle, which may already be the romaji: the
+    // native script is another thing to try when matching against TMDB.
+    nativeTitle: native || '',
+    format: media.format || '',
     originalLanguage: 'ja',
     foreign: Boolean(original && original !== primary),
     year: media.seasonYear || null,
@@ -136,12 +220,24 @@ export function normalizeAnime(media) {
 /* ---------- queries ---------- */
 
 /** Popular anime, for the Anime tile in the Genres tab. One request. */
-export async function browseAnime({ type = 'all', page = 1, perPage = 40 } = {}) {
+export async function browseAnime({ type = 'all', page = 1, perPage = 50 } = {}) {
   const formats = formatsFor(type);
-  const data = await cached(`anilist:browse:${type}:${page}`, 12 * 60 * 60 * 1000, () =>
+  const data = await cached(`anilist:browse:v2:${type}:${page}`, 12 * 60 * 60 * 1000, () =>
+    // Over-fetch: collapsing later cours removes entries, and the grid should
+    // still fill.
     gql(BROWSE_QUERY, { page, perPage, format_in: formats })
   );
-  return (data?.Page?.media || []).map(normalizeAnime).filter(Boolean);
+  return collapseSeasons(data?.Page?.media || []).map(normalizeAnime).filter(Boolean);
+}
+
+/** Anime carrying an AniList tag — what a tag chip in a detail sheet opens. */
+export async function browseByTag(tag, { type = 'all', page = 1, perPage = 50 } = {}) {
+  if (!tag) return [];
+  const formats = formatsFor(type);
+  const data = await cached(`anilist:tag:${tag}:${type}:${page}`, 12 * 60 * 60 * 1000, () =>
+    gql(TAG_QUERY, { page, perPage, tag, format_in: formats })
+  );
+  return collapseSeasons(data?.Page?.media || []).map(normalizeAnime).filter(Boolean);
 }
 
 /**
@@ -155,7 +251,21 @@ export async function resolveToTmdb(entry) {
   const key = `anilist:tmdb:${entry.anilistId}`;
 
   return cached(key, 90 * DAY, async () => {
-    for (const title of [entry.title, entry.originalTitle].filter(Boolean)) {
+    // Season-stripped variants matter even after collapseSeasons: an entry can
+    // still reach here by other routes, and TMDB names the show without them.
+    const attempts = [];
+    for (const title of [entry.title, entry.originalTitle, entry.nativeTitle]) {
+      if (!title) continue;
+      attempts.push(title);
+      const stripped = stripSeasonMarkers(title);
+      if (stripped && stripped !== title) attempts.push(stripped);
+    }
+
+    const seen = new Set();
+    for (const title of attempts) {
+      if (seen.has(title)) continue;
+      seen.add(title);
+
       let results;
       try {
         results = await tmdbSearch(title);

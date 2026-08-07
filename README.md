@@ -127,6 +127,23 @@ your Lists and out of Trending. Searching by name still finds them, and the
 "Not for me" filter chip on the Lists tab always shows them — so a rating you
 hide is never a rating you can't undo.
 
+### Rating without opening anything
+
+**Press and hold a poster for about half a second**, then slide onto one of the
+three verdicts that appear above it and let go. Release anywhere else and
+nothing happens. Dragging onto the verdict already set clears it, the same as
+tapping it twice in the detail sheet does.
+
+Works on every poster grid — Browse, Genres and Lists. Anime tiles from the
+AniList grid have no TMDB id until they're opened, so releasing on an option
+looks up the match first and tells you if there isn't one.
+
+Two things it deliberately doesn't do. There's **no haptic tap**: WebKit never
+shipped the Vibration API, so the feedback is visual. And it has **no keyboard
+equivalent** — a long-press can't have one — so it's an accelerator rather than
+a new capability; the detail sheet's rating row offers the same three verdicts
+to everyone.
+
 ### When something stops working
 
 **Settings → Diagnostics → Check connections** pings TMDB, OMDb and AniList and
@@ -151,6 +168,11 @@ than get new-to-you picks.
 Genres that TMDB only has for one medium (Horror is film-only, Reality is
 TV-only) don't offer a filter that could only ever come back empty.
 
+**Genre chips in a detail sheet are tappable** and open that genre with the
+medium carried over — a TV show's *Drama* chip opens Drama already filtered to
+TV. Outlined chips are the tappable ones. AniList tags are tappable too, opening
+an anime browse for that tag.
+
 ### Anime, via AniList
 
 **Anime is its own tile**, separate from Animation, and comes from
@@ -167,6 +189,17 @@ TMDB ids stay the app's primary key — AniList is a supplement, never a second
 identity, or watch state, watchlists, providers and sync would each split across
 two id spaces. An AniList tile resolves to its TMDB entry when you tap it, not
 while the grid renders, so a screen of anime costs one request rather than forty.
+
+**Cours are collapsed into one entry per show.** AniList gives each cour its own
+record — *Attack on Titan*, *…Season 2*, *…The Final Season* — while TMDB models
+the whole thing as one show with four seasons, which is also how this app tracks
+it. Later cours are detected through AniList's `PREQUEL` relations and folded
+away. A *film* that follows a series (Demon Slayer's *Mugen Train*) has a TV
+prequel too but is genuinely its own TMDB entry, so it survives the collapse.
+
+Anime that TMDB has never heard of — obscure OVAs, very new shows — opens a
+read-only AniList sheet with its score, studio, synopsis and a link out. It
+can't be rated or listed, and says so: tracking is keyed on TMDB ids.
 
 **AniDB was considered and rejected**: it sends no CORS headers, needs a
 registered client id on every request, and allows one request per two seconds

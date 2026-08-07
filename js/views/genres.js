@@ -8,7 +8,7 @@
 import { h, icon, clear, fill, grid, skeletonGrid, emptyState } from '../ui.js';
 import { state, getItem, hasKeys } from '../store.js';
 import { discoverByGenre, hasTmdbKey } from '../tmdb.js';
-import { browseAnime, rejectSeen } from '../anilist.js';
+import { browseAnime, browseByTag, rejectSeen } from '../anilist.js';
 import { GENRES, findGenre, availableTypes, genreIdFor } from '../genres.js';
 import { excludeSet, genreAffinity, rankByAffinity } from '../recommend.js';
 import { hiddenByPreference } from '../sort.js';
@@ -20,10 +20,32 @@ const storedFor = (item) => getItem(item.type, item.id);
 // Kept across renders so returning to a genre restores the filters you set.
 const ui = { type: 'all', unseenOnly: true };
 
-export function renderGenres(root, genreKey) {
+export function renderGenres(root, segments) {
   clear(root);
-  if (genreKey) renderResults(root, genreKey);
-  else renderCatalog(root);
+  const [key, type] = segments || [];
+  if (!key) return renderCatalog(root);
+
+  // A chip carries its medium through (#/genres/drama/tv), so a TV show's Drama
+  // opens filtered to TV rather than resetting to whatever was last used.
+  if (type === 'movie' || type === 'tv') ui.type = type;
+
+  // AniList tags are browsable but aren't TMDB genres, so they ride a prefixed
+  // sub-route rather than pretending to be a catalog key.
+  if (key.startsWith('tag:')) {
+    return renderResults(root, {
+      key,
+      name: decodeURIComponent(key.slice(4)),
+      source: 'anilist',
+      tag: decodeURIComponent(key.slice(4)),
+    });
+  }
+
+  const genre = findGenre(key);
+  if (!genre) {
+    fill(root, emptyState({ title: 'Unknown genre', body: 'That genre no longer exists.' }));
+    return;
+  }
+  renderResults(root, genre);
 }
 
 /* ---------- the genre grid ---------- */
@@ -62,13 +84,7 @@ function renderCatalog(root) {
 
 /* ---------- a genre's results ---------- */
 
-function renderResults(root, genreKey) {
-  const genre = findGenre(genreKey);
-  if (!genre) {
-    fill(root, emptyState({ title: 'Unknown genre', body: 'That genre no longer exists.' }));
-    return;
-  }
-
+function renderResults(root, genre) {
   const types = availableTypes(genre);
   // A genre TMDB only has for film shouldn't offer a TV filter that can only
   // ever come back empty.
@@ -201,6 +217,7 @@ async function load(host, genre) {
 let loadToken = 0;
 
 async function fetchForGenre(genre) {
+  if (genre.tag) return browseByTag(genre.tag, { type: ui.type });
   if (genre.source === 'anilist') return browseAnime({ type: ui.type });
 
   const types = availableTypes(genre).filter((t) => ui.type === 'all' || t === ui.type);

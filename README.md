@@ -151,6 +151,11 @@ than get new-to-you picks.
 Genres that TMDB only has for one medium (Horror is film-only, Reality is
 TV-only) don't offer a filter that could only ever come back empty.
 
+**Genre chips in a detail sheet are tappable** and open that genre with the
+medium carried over — a TV show's *Drama* chip opens Drama already filtered to
+TV. Outlined chips are the tappable ones. AniList tags are tappable too, opening
+an anime browse for that tag.
+
 ### Anime, via AniList
 
 **Anime is its own tile**, separate from Animation, and comes from
@@ -167,6 +172,17 @@ TMDB ids stay the app's primary key — AniList is a supplement, never a second
 identity, or watch state, watchlists, providers and sync would each split across
 two id spaces. An AniList tile resolves to its TMDB entry when you tap it, not
 while the grid renders, so a screen of anime costs one request rather than forty.
+
+**Cours are collapsed into one entry per show.** AniList gives each cour its own
+record — *Attack on Titan*, *…Season 2*, *…The Final Season* — while TMDB models
+the whole thing as one show with four seasons, which is also how this app tracks
+it. Later cours are detected through AniList's `PREQUEL` relations and folded
+away. A *film* that follows a series (Demon Slayer's *Mugen Train*) has a TV
+prequel too but is genuinely its own TMDB entry, so it survives the collapse.
+
+Anime that TMDB has never heard of — obscure OVAs, very new shows — opens a
+read-only AniList sheet with its score, studio, synopsis and a link out. It
+can't be rated or listed, and says so: tracking is keyed on TMDB ids.
 
 **AniDB was considered and rejected**: it sends no CORS headers, needs a
 registered client id on every request, and allows one request per two seconds

@@ -388,7 +388,40 @@ console.log('anime ->', animeTitles.join(', '));
 if (!animeTitles.includes('Attack on Titan')) {
   problems.push(`AniList-sourced anime results missing: ${animeTitles.join('|')}`);
 }
+// AniList lists each cour separately; the tile must show the show once.
+if (animeTitles.some((t) => /season\s*\d|final season/i.test(t))) {
+  problems.push(`a later cour was listed as its own show: ${animeTitles.join('|')}`);
+}
+if (animeTitles.filter((t) => /^Attack on Titan/.test(t)).length !== 1) {
+  problems.push(`Attack on Titan listed ${animeTitles.filter((t) => /^Attack on Titan/.test(t)).length} times`);
+}
+// ...but a film that follows a series has its own TMDB entry and must survive.
+if (!animeTitles.some((t) => /Mugen Train/.test(t))) {
+  problems.push('a sequel film was collapsed away along with the cours');
+}
 await shot('24-genres-anime');
+
+/* an anime with no TMDB match gets a read-only AniList sheet, not a dead end */
+await page.locator('.grid .tile', { hasText: 'Yofukashi' }).first().click();
+await page.waitForTimeout(1400);
+const noTmdbBody = await page.locator('.sheet-body').innerText();
+console.log('no-TMDB sheet ->', noTmdbBody.split('\n').slice(0, 6).join(' / '));
+if (!/Not on TMDB/.test(noTmdbBody)) {
+  problems.push('the AniList-only sheet does not explain why the title cannot be tracked');
+}
+if (!/Studio Nowhere/.test(noTmdbBody)) {
+  problems.push('the AniList-only sheet is missing the AniList metadata');
+}
+if (!(await page.locator('.sheet-body a[href*="anilist.co"]').count())) {
+  problems.push('the AniList-only sheet has no link out to AniList');
+}
+// It must not offer tracking controls it cannot honour.
+if (await page.locator('.sheet-body .rating-btn').count()) {
+  problems.push('the AniList-only sheet offers rating controls it cannot store');
+}
+await shot('24a-anime-no-tmdb');
+await page.goBack();
+await page.waitForTimeout(700);
 
 // the movie/TV filter narrows to one format
 await page.locator('.chips .chip', { hasText: 'Movies' }).first().click();
@@ -439,9 +472,44 @@ if (!(await page.locator('.hero .genres .g-tag').count())) {
 }
 await shot('26-anime-enriched');
 
-// a non-anime sheet must be untouched by all of this
-await page.goBack();
+/* tapping an AniList tag opens an anime browse for it */
+const tagName = await page.locator('.hero .genres .g-tag').first().textContent();
+await page.locator('.hero .genres .g-tag').first().click();
+await page.waitForTimeout(1400);
+const tagHeading = await page.locator('.genre-head h1').textContent();
+console.log(`tag "${tagName}" -> heading "${tagHeading}"`);
+if (tagHeading.trim() !== tagName.trim()) {
+  problems.push(`tag browse heading wrong: "${tagHeading}" for tag "${tagName}"`);
+}
+if (!(await page.locator('.grid .tile').count())) {
+  problems.push('the AniList tag browse returned nothing');
+}
+await shot('26a-tag-browse');
+
+/* tapping a genre chip opens that genre, with the medium carried over */
+await page.click('.tab[data-tab="browse"]');
 await page.waitForTimeout(600);
+await page.fill('input[type="search"]', 'breaking');
+await page.waitForTimeout(800);
+await page.click('.grid .tile');
+await page.waitForTimeout(1200);
+const chipHref = await page.locator('.hero .genres .g-link').first().getAttribute('href');
+console.log('tv genre chip href ->', chipHref);
+if (!/^#\/genres\/[a-z]+\/tv$/.test(chipHref)) {
+  problems.push(`a TV sheet's genre chip did not carry the medium: ${chipHref}`);
+}
+await page.locator('.hero .genres .g-link').first().click();
+await page.waitForTimeout(1400);
+const tvChipPressed = await page.locator('.chips .chip[data-type="tv"]').getAttribute('aria-pressed');
+console.log('TV chip preselected ->', tvChipPressed);
+if (tvChipPressed !== 'true') {
+  problems.push('the genre opened from a TV sheet did not preselect the TV filter');
+}
+await shot('26b-genre-from-chip');
+
+// a non-anime sheet must be untouched by all of this
+await page.click('.tab[data-tab="browse"]');
+await page.waitForTimeout(700);
 await page.fill('input[type="search"]', 'princess');
 await page.waitForTimeout(800);
 await page.click('.grid .tile');

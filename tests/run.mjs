@@ -529,6 +529,44 @@ test('anime is its own tile, and Animation is marked to exclude it', () => {
   assert.equal(genres.findGenre('animation').excludeJapanese, true);
 });
 
+/* ---------- genre chips ---------- */
+
+// TMDB's full published genre lists. If a name here doesn't resolve, a chip in
+// a detail sheet is a dead one.
+const TMDB_MOVIE_GENRES = [
+  'Action', 'Adventure', 'Animation', 'Comedy', 'Crime', 'Documentary', 'Drama',
+  'Family', 'Fantasy', 'History', 'Horror', 'Music', 'Mystery', 'Romance',
+  'Science Fiction', 'TV Movie', 'Thriller', 'War', 'Western',
+];
+const TMDB_TV_GENRES = [
+  'Action & Adventure', 'Animation', 'Comedy', 'Crime', 'Documentary', 'Drama',
+  'Family', 'Kids', 'Mystery', 'News', 'Reality', 'Sci-Fi & Fantasy', 'Soap',
+  'Talk', 'War & Politics', 'Western',
+];
+
+test('every TMDB genre name maps to a browsable genre', () => {
+  for (const name of [...TMDB_MOVIE_GENRES, ...TMDB_TV_GENRES]) {
+    const key = genres.genreKeyFromName(name);
+    assert.ok(key, `"${name}" does not resolve — its chip would be dead`);
+    assert.ok(genres.findGenre(key), `"${name}" resolves to missing genre "${key}"`);
+  }
+});
+
+test('the per-medium genre names both land on the same tile', () => {
+  // TMDB names these differently for film and TV; the chip should go to one place.
+  assert.equal(genres.genreKeyFromName('Science Fiction'), 'scifi');
+  assert.equal(genres.genreKeyFromName('Sci-Fi & Fantasy'), 'scifi');
+  assert.equal(genres.genreKeyFromName('Action & Adventure'), 'action');
+  assert.equal(genres.genreKeyFromName('War & Politics'), 'war');
+});
+
+test('an unrecognised chip resolves to null rather than throwing', () => {
+  // AniList tags arrive in the same chip row and must not pretend to be genres.
+  for (const name of ['Iyashikei', '', null, undefined, 'Not A Genre']) {
+    assert.equal(genres.genreKeyFromName(name), null);
+  }
+});
+
 /* ---------- affinity ranking ---------- */
 
 test('within a genre, ranking leans on a candidate’s other genres', () => {
@@ -597,6 +635,73 @@ test('TV-shaped AniList formats map to the TV type', () => {
     assert.equal(anilist.normalizeAnime({ ...ANILIST_MEDIA, format }).type, 'tv');
   }
   assert.equal(anilist.normalizeAnime({ ...ANILIST_MEDIA, format: 'MOVIE' }).type, 'movie');
+});
+
+test('later cours are collapsed away, but sequel films are not', () => {
+  const root = { id: 16498, format: 'TV', relations: { edges: [] } };
+  const season2 = {
+    id: 20958,
+    format: 'TV',
+    relations: { edges: [{ relationType: 'PREQUEL', node: { id: 16498, type: 'ANIME', format: 'TV' } }] },
+  };
+  // A film following a series has a TV prequel too, but is its own TMDB entry.
+  const sequelFilm = {
+    id: 112151,
+    format: 'MOVIE',
+    relations: { edges: [{ relationType: 'PREQUEL', node: { id: 101922, type: 'ANIME', format: 'TV' } }] },
+  };
+  // A sequel edge is not a prequel edge — the root points forward, not back.
+  const rootWithSequel = {
+    id: 1,
+    format: 'TV',
+    relations: { edges: [{ relationType: 'SEQUEL', node: { id: 2, type: 'ANIME', format: 'TV' } }] },
+  };
+
+  assert.equal(anilist.isContinuation(season2), true);
+  assert.equal(anilist.isContinuation(root), false);
+  assert.equal(anilist.isContinuation(sequelFilm), false);
+  assert.equal(anilist.isContinuation(rootWithSequel), false);
+
+  assert.deepEqual(
+    anilist.collapseSeasons([root, season2, sequelFilm]).map((m) => m.id),
+    [16498, 112151]
+  );
+  assert.deepEqual(anilist.collapseSeasons([]), []);
+  assert.deepEqual(anilist.collapseSeasons(null), []);
+});
+
+test('an adaptation or side story is not treated as a later cour', () => {
+  // Only PREQUEL counts; a manga source or spin-off must not collapse the entry.
+  for (const relationType of ['ADAPTATION', 'SIDE_STORY', 'SPIN_OFF', 'ALTERNATIVE', 'PARENT']) {
+    const media = {
+      format: 'TV',
+      relations: { edges: [{ relationType, node: { id: 9, type: 'ANIME', format: 'TV' } }] },
+    };
+    assert.equal(anilist.isContinuation(media), false, `${relationType} collapsed the entry`);
+  }
+});
+
+test('season markers are stripped, but numbers that are part of a title are not', () => {
+  const cases = [
+    ['Attack on Titan Season 2', 'Attack on Titan'],
+    ['Shingeki no Kyojin: The Final Season', 'Shingeki no Kyojin'],
+    ['Vinland Saga Season 2', 'Vinland Saga'],
+    ['Kaguya-sama: Love is War 2nd Season', 'Kaguya-sama: Love is War'],
+    ['Mob Psycho 100 II', 'Mob Psycho 100'],
+    ['Some Show Part 2', 'Some Show'],
+    ['Some Show Cour 2', 'Some Show'],
+    ['Attack on Titan Final Season Part 2', 'Attack on Titan'],
+  ];
+  for (const [input, expected] of cases) {
+    assert.equal(anilist.stripSeasonMarkers(input), expected, `stripping "${input}"`);
+  }
+
+  // These digits are the title, not a season number.
+  for (const title of ['Steins;Gate 0', 'Mobile Suit Gundam 00', 'Haikyuu!!', 'K-On!']) {
+    assert.equal(anilist.stripSeasonMarkers(title), title, `mangled "${title}"`);
+  }
+  assert.equal(anilist.stripSeasonMarkers(''), '');
+  assert.equal(anilist.stripSeasonMarkers(null), '');
 });
 
 test('already-seen anime is matched by title, since it has no TMDB id yet', () => {

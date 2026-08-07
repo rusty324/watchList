@@ -427,7 +427,8 @@ svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; 
 .hero .alt-title { margin: 4px 0 0; font-size: 14px; color: var(--fg-dim); }
 .hero .facts { margin: 8px 0 0; font-size: 13.5px; color: var(--fg-dim); }
 .hero .genres { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 5px; }
-.hero .genres span {
+/* Matches both the plain <span> chips and the <a> ones that link to a genre. */
+.hero .genres > * {
   padding: 3px 8px; border-radius: 999px;
   background: var(--bg-sunk); color: var(--fg-dim);
   font-size: 11.5px; font-weight: 600;
@@ -437,6 +438,12 @@ svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; 
   background: color-mix(in srgb, var(--anilist) 16%, var(--bg-sunk));
   color: color-mix(in srgb, var(--anilist) 70%, var(--fg));
 }
+/* Tappable chips get a faint outline; the ones that can't be browsed stay flat,
+ * so there's a visible difference rather than a link that goes nowhere. */
+.hero .genres .g-link {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 32%, transparent);
+}
+.hero .genres .g-link:active { opacity: 0.6; }
 
 .lang-toggle {
   display: inline-flex;

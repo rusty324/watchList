@@ -5,7 +5,7 @@
  * would make that a circular import for no benefit.
  */
 
-import { h, icon, fill, openSheet, displayTitle, emptyState } from '../ui.js';
+import { h, icon, fill, openSheet, displayTitle, emptyState, posterBox } from '../ui.js';
 import {
   getItem,
   upsertItem,
@@ -31,6 +31,7 @@ import {
   checkboxAction,
   castRow,
   providerBox,
+  genreChip,
   snapshot,
 } from './parts.js';
 
@@ -51,13 +52,7 @@ function openAnime(entry) {
       api.body.append(loading());
       const match = await resolveToTmdb(entry);
       if (!match) {
-        fill(api.body,
-          emptyState({
-            iconName: 'film',
-            title: 'Not on TMDB',
-            body: `“${entry.title}” has no TMDB entry, so it can't be tracked here yet.`,
-          })
-        );
+        renderAnilistOnly(api, entry);
         return;
       }
       // Swap this placeholder sheet for the real one rather than stacking two.
@@ -139,6 +134,82 @@ export function openMovie(id, hint) {
 }
 
 /**
+ * Read-only sheet for anime TMDB has never heard of — obscure OVAs, ONAs and
+ * very new shows.
+ *
+ * Deliberately offers no rating, watch mark or watchlist: the store is keyed on
+ * TMDB ids, and minting `anilist:` keys would fragment watch state, providers
+ * and Gist sync across two id spaces. Better to show what AniList knows and say
+ * plainly why it can't be tracked than to leave a dead end.
+ */
+function renderAnilistOnly(api, entry) {
+  api.setTitle(entry.title);
+
+  const facts = [
+    entry.year || null,
+    entry.format ? entry.format.replace(/_/g, ' ') : null,
+    entry.studio || null,
+    entry.type === 'tv' && entry.episodes
+      ? `${entry.episodes} episode${entry.episodes === 1 ? '' : 's'}`
+      : null,
+  ].filter(Boolean);
+
+  fill(api.body,
+    h(
+      'div',
+      { class: 'hero' },
+      posterBox(entry, 'w342'),
+      h(
+        'div',
+        { class: 'info' },
+        h('h1', {}, entry.title),
+        entry.originalTitle ? h('p', { class: 'alt-title' }, entry.originalTitle) : null,
+        h('p', { class: 'facts' }, facts.join(' · ')),
+        entry.genres?.length || entry.tags?.length
+          ? h(
+              'div',
+              { class: 'genres' },
+              (entry.genres || []).map((g) => genreChip(g, entry.type)),
+              (entry.tags || []).map((t) =>
+                h('a', { class: 'g-tag g-link', href: `#/genres/tag:${encodeURIComponent(t)}` }, t)
+              )
+            )
+          : null
+      )
+    ),
+    entry.anilistScore != null
+      ? h(
+          'div',
+          { class: 'scores' },
+          h(
+            'div',
+            { class: 'score anilist' },
+            h('div', { class: 's-label' }, 'AniList'),
+            h('div', { class: 's-val' }, entry.anilistScore.toFixed(1))
+          )
+        )
+      : null,
+    h(
+      'div',
+      { class: 'note warn' },
+      h('strong', {}, 'Not on TMDB. '),
+      'This one can’t be rated or added to a list, because watch tracking is keyed on TMDB and it has no entry there.'
+    ),
+    entry.overview ? h('p', { class: 'overview' }, entry.overview) : null,
+    h(
+      'a',
+      {
+        class: 'btn secondary',
+        href: `https://anilist.co/anime/${entry.anilistId}`,
+        target: '_blank',
+        rel: 'noopener',
+      },
+      'Open on AniList'
+    )
+  );
+}
+
+/**
  * Fold AniList data into a sheet already rendered from TMDB. Runs in the
  * background and does nothing at all for non-anime, so the sheet never waits on
  * it and nothing shifts for the vast majority of titles.
@@ -166,7 +237,11 @@ async function applyAnimeEnrichment(meta, scores, body) {
     const existing = new Set([...genreRow.children].map((c) => c.textContent.toLowerCase()));
     for (const tag of anime.tags) {
       if (existing.has(tag.toLowerCase())) continue;
-      genreRow.append(h('span', { class: 'g-tag' }, tag));
+      // Tags browse through AniList rather than TMDB, so they get their own
+      // sub-route rather than a genre key.
+      genreRow.append(
+        h('a', { class: 'g-tag g-link', href: `#/genres/tag:${encodeURIComponent(tag)}` }, tag)
+      );
     }
   }
 }

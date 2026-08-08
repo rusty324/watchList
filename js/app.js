@@ -2,7 +2,12 @@
 
 import { subscribe } from './store.js';
 import { sheetDepth, closeAllSheets } from './ui.js';
-import { renderBrowse, invalidateRecommendations } from './views/browse.js';
+import {
+  renderBrowse,
+  invalidateRecommendations,
+  clearSearch,
+  searchQuery,
+} from './views/browse.js';
 import { renderGenres } from './views/genres.js';
 import { renderLists } from './views/lists.js';
 import { consumeSetupLink, openSettings } from './views/settings.js';
@@ -44,7 +49,38 @@ function render() {
   ROUTES[current](view, route.sub);
   // Moving within a tab (picking a genre) shouldn't fight the browser over
   // scroll position the way switching tabs should reset it.
-  if (tabChanged) view.scrollTop = 0;
+  if (tabChanged) scrollToTop({ smooth: false });
+}
+
+/**
+ * The window scrolls, not #view — it has no `overflow`, so the `view.scrollTop`
+ * this used to set was silently doing nothing.
+ */
+function scrollToTop({ smooth = true } = {}) {
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  window.scrollTo({ top: 0, behavior: smooth && !reduce ? 'smooth' : 'auto' });
+}
+
+/**
+ * Tapping the tab you're already on returns you to that tab's root, the way iOS
+ * apps do. The hash wouldn't change, so no navigation event would fire on its
+ * own.
+ */
+for (const tab of tabs) {
+  tab.addEventListener('click', (event) => {
+    if (tab.dataset.tab !== current) return; // a real tab switch; let it through
+    event.preventDefault();
+
+    if (current === 'browse' && searchQuery()) {
+      clearSearch();
+      render();
+    } else if (current === 'genres' && parseRoute().sub) {
+      // Inside a genre: back out to the grid rather than just scrolling.
+      location.hash = '#/genres';
+      return;
+    }
+    scrollToTop();
+  });
 }
 
 addEventListener('hashchange', () => {

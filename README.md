@@ -7,7 +7,8 @@ site on GitHub Pages — no server, no accounts, no build step.
 - **Browse** — search TMDB, or get recommendations built from your own ratings.
 - **Genres** — pick a genre, get picks in it you haven't seen, filter to films or
   TV. Anime is its own tile, sourced from AniList.
-- **Lists** — everything you've tracked, filtered and sorted seven ways.
+- **Lists** — everything you've tracked, with filters that combine and eleven
+  sort orders.
 - **Three verdicts** — *Liked it*, *One and done* ("glad I saw it, but never
   again"), and *Not for me*, which you can hide from view entirely.
 - **Where to watch** — what's streaming, free, rentable or buyable in your
@@ -126,6 +127,39 @@ filed as either a lie or a thumbs up. Tapping the active rating clears it.
 your Lists and out of Trending. Searching by name still finds them, and the
 "Not for me" filter chip on the Lists tab always shows them — so a rating you
 hide is never a rating you can't undo.
+
+### Filters that combine
+
+The Lists tab's filters are grouped — Status, Type, Rating and Genre — and
+several can be on at once. **Picks inside a group widen the results; picks
+across groups narrow them.** So Movies + TV + Liked means "liked films and
+shows", while Movies + Liked means "liked films".
+
+Grouping is what makes multi-select work here at all: several of these exclude
+each other by construction (nothing is both Watched and Not watched, and a title
+carries at most one rating), so a flat "match everything selected" would make
+half the combinations empty by design.
+
+Genre chips are built from the genres your library actually contains, not the
+full catalog of 21 — a genre you own nothing in would only ever return nothing.
+
+**"Not for me" titles are hidden by default.** Selecting the *Not for me* chip
+always reveals them, and Settings → Display can turn the hiding off entirely.
+
+### Search filters
+
+Searching shows chips for type (All / Movies / TV / People) and for the genres
+present in the results, a sort control, and a *Hide tracked* toggle.
+
+These narrow **what came back**, not what was asked for: TMDB's multi-search
+accepts no type, genre or year parameter. That's why the genre chips are built
+from the results themselves — they can only offer genres actually present. For
+browsing a whole genre, the Genres tab does it properly.
+
+### Tapping the tab you're already on
+
+Returns you to that tab's root, the way iOS apps do: scrolls to the top, and on
+Browse clears the search, and on Genres backs out to the genre grid.
 
 ### Rating without opening anything
 

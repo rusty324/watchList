@@ -10,7 +10,7 @@
 
 const DATA_KEY = 'wl.data.v1';
 const SECRETS_KEY = 'wl.secrets.v1';
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 const listeners = new Set();
 let saveTimer = null;
@@ -36,7 +36,7 @@ function emptyData() {
     settings: {
       defaultTitleLang: 'en',
       theme: 'auto',
-      hideDisliked: false,
+      hideDisliked: true,
       // '' means "work it out from this device's locale" — see resolveRegion().
       region: '',
       myProviders: [],
@@ -62,9 +62,16 @@ function read(key, fallback) {
 /** Runs on load so older payloads (from a Gist or an export) stay usable. */
 function migrate(data) {
   if (!data.items || typeof data.items !== 'object') data.items = {};
+  const incoming = Number(data.version) || 1;
   // Merge over the defaults so settings added in a later version are present
   // even when the payload came from an older export or another device's Gist.
   data.settings = { ...emptyData().settings, ...(data.settings || {}) };
+
+  // v2 made hiding "Not for me" the default. Changing the default alone would
+  // do nothing for an existing install, where the stored `false` wins — so flip
+  // it once, guarded by the version so it can't override a later opt-out.
+  if (incoming < 2) data.settings.hideDisliked = true;
+
   data.version = SCHEMA_VERSION;
   return data;
 }

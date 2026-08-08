@@ -313,11 +313,44 @@ test('other sorts cover the remaining requested orders', () => {
   assert.equal(titlesOf(sortMod.applyList(LIST, { sort: 'year' }))[0], 'Parasite');
 });
 
+/** Filters as the UI builds them: one Set per group. */
+const filters = (groups) => ({ ...sortMod.emptyFilters(), ...Object.fromEntries(
+  Object.entries(groups).map(([k, v]) => [k, new Set(v)])
+) });
+
 test('filters narrow the list as labelled', () => {
-  assert.deepEqual(titlesOf(sortMod.applyList(LIST, { filter: 'watchlist' })), ['Parasite']);
-  assert.deepEqual(titlesOf(sortMod.applyList(LIST, { filter: 'tv' })), ['Breaking Bad']);
-  assert.equal(sortMod.applyList(LIST, { filter: 'watched' }).length, 3);
-  assert.deepEqual(titlesOf(sortMod.applyList(LIST, { filter: 'liked' })), ['The Princess Bride']);
+  const pick = (groups) => titlesOf(sortMod.applyList(LIST, { filters: filters(groups) }));
+  assert.deepEqual(pick({ status: ['watchlist'] }), ['Parasite']);
+  assert.deepEqual(pick({ type: ['tv'] }), ['Breaking Bad']);
+  assert.equal(pick({ status: ['watched'] }).length, 3);
+  assert.deepEqual(pick({ rating: ['liked'] }), ['The Princess Bride']);
+  // No filters at all is not the same as filtering everything out.
+  assert.equal(sortMod.applyList(LIST, {}).length, 4);
+});
+
+test('picks inside a group widen, picks across groups narrow', () => {
+  const pick = (groups) => titlesOf(sortMod.applyList(LIST, { filters: filters(groups) }));
+
+  // Within Type: both media, not neither.
+  assert.equal(pick({ type: ['movie', 'tv'] }).length, 4);
+  // Across groups: liked AND a film, which is the whole point of grouping.
+  assert.deepEqual(pick({ type: ['movie'], rating: ['liked'] }), ['The Princess Bride']);
+  // A combination with no overlap is legitimately empty.
+  assert.deepEqual(pick({ type: ['tv'], rating: ['liked'] }), []);
+});
+
+test('genre options come from the library, most common first', () => {
+  const options = sortMod.genreOptions(LIST).map((g) => g.name);
+  // Untracked Film has no genres and contributes nothing.
+  assert.deepEqual(options.sort(), ['Adventure', 'Drama', 'Horror', 'Thriller']);
+  assert.deepEqual(sortMod.genreOptions({}), []);
+});
+
+test('the genre group filters on any of the selected genres', () => {
+  const pick = (names) => titlesOf(sortMod.applyList(LIST, { filters: filters({ genre: names }) }));
+  assert.deepEqual(pick(['Adventure']), ['The Princess Bride']);
+  assert.deepEqual(pick(['Adventure', 'Drama']).sort(), ['Breaking Bad', 'The Princess Bride']);
+  assert.deepEqual(pick(['Nonexistent']), []);
 });
 
 test('the list filter box matches original titles too', () => {
@@ -341,10 +374,13 @@ test('“one and done” sorts between liked and unrated', () => {
 });
 
 test('the one-and-done and not-for-me filters select their own titles', () => {
-  assert.deepEqual(titlesOf(sortMod.applyList(RATED, { filter: 'once' })), ['Once']);
-  assert.deepEqual(titlesOf(sortMod.applyList(RATED, { filter: 'disliked' })), ['Disliked']);
+  const pick = (names) => titlesOf(sortMod.applyList(RATED, { filters: filters({ rating: names }) }));
+  assert.deepEqual(pick(['once']), ['Once']);
+  assert.deepEqual(pick(['disliked']), ['Disliked']);
   // "Liked" must not have widened to include the middle rating.
-  assert.deepEqual(titlesOf(sortMod.applyList(RATED, { filter: 'liked' })), ['Loved']);
+  assert.deepEqual(pick(['liked']), ['Loved']);
+  // Two ratings at once widen, since a title can only carry one.
+  assert.deepEqual(pick(['liked', 'once']).sort(), ['Loved', 'Once']);
 });
 
 test('tapping “one and done” twice clears it', () => {
@@ -372,7 +408,7 @@ test('the “not for me” filter always reveals hidden titles', () => {
   // The escape hatch: without this, hiding a rating would strand it with no way
   // back to the sheet that could change it.
   const out = sortMod.applyList(RATED, {
-    filter: 'disliked',
+    filters: filters({ rating: ['disliked'] }),
     settings: { hideDisliked: true },
   });
   assert.deepEqual(titlesOf(out), ['Disliked']);

@@ -5,7 +5,7 @@ import { h, icon, clear, fill, grid, skeletonGrid, emptyState, displayTitle, til
 import { state, getItem, hasKeys } from '../store.js';
 import { search, trending, hasTmdbKey } from '../tmdb.js';
 import { buildRecommendations, seedsFrom } from '../recommend.js';
-import { hiddenByPreference } from '../sort.js';
+import { hiddenByPreference, applySearch, searchGenres, SEARCH_SORTS } from '../sort.js';
 import { openItem } from './detail.js';
 import { openSettings } from './settings.js';
 
@@ -15,8 +15,26 @@ let lastQuery = '';
 let searchTimer = null;
 let recCache = null;
 
+// Applied to the results TMDB returned, not to the query — see applySearch.
+const searchUi = { type: 'all', genres: new Set(), sort: 'relevance', hideTracked: false };
+let lastResults = [];
+
 export function invalidateRecommendations() {
   recCache = null;
+}
+
+export function searchQuery() {
+  return lastQuery.trim();
+}
+
+/** Used by the tab bar: tapping Browse again while a search is up clears it. */
+export function clearSearch() {
+  lastQuery = '';
+  lastResults = [];
+  searchUi.type = 'all';
+  searchUi.genres = new Set();
+  searchUi.sort = 'relevance';
+  searchUi.hideTracked = false;
 }
 
 export function renderBrowse(root) {
@@ -96,7 +114,8 @@ async function runSearch(host, query) {
       );
       return;
     }
-    fill(host, grid(items, storedFor, openItem));
+    lastResults = items;
+    paintResults(host);
   } catch (err) {
     if (lastQuery.trim() !== q) return;
     fill(host, 
@@ -110,6 +129,123 @@ async function runSearch(host, query) {
       })
     );
   }
+}
+
+/**
+ * Result filters.
+ *
+ * These narrow what came back, not what was asked for: TMDB's multi-search
+ * takes no type, genre or year parameter. Building the genre chips from the
+ * results themselves keeps that honest — it can only offer genres that are
+ * actually present, so it never looks like a genre-wide search.
+ */
+function searchFilters(host) {
+  const genres = searchGenres(lastResults);
+
+  const chipRow = (label, options, isOn, toggle) =>
+    h(
+      'div',
+      { class: 'filter-row' },
+      h('span', { class: 'f-label' }, label),
+      h(
+        'div',
+        { class: 'chips' },
+        options.map(([key, text]) =>
+          h(
+            'button',
+            {
+              type: 'button',
+              class: 'chip',
+              dataset: { key },
+              'aria-pressed': String(isOn(key)),
+              onclick: () => {
+                toggle(key);
+                paintResults(host);
+              },
+            },
+            text
+          )
+        )
+      )
+    );
+
+  const sortSelect = h(
+    'select',
+    {
+      class: 'select',
+      'aria-label': 'Sort results',
+      onchange: () => {
+        searchUi.sort = sortSelect.value;
+        paintResults(host);
+      },
+    },
+    Object.entries(SEARCH_SORTS).map(([key, s]) =>
+      h('option', { value: key, selected: searchUi.sort === key }, s.label)
+    )
+  );
+
+  return h(
+    'div',
+    { class: 'filters search-filters' },
+    chipRow(
+      'Type',
+      [['all', 'All'], ['movie', 'Movies'], ['tv', 'TV'], ['person', 'People']],
+      (key) => searchUi.type === key,
+      (key) => {
+        searchUi.type = key;
+        // People carry no genres, so a genre filter would empty the list.
+        if (key === 'person') searchUi.genres = new Set();
+      }
+    ),
+    genres.length > 1
+      ? chipRow(
+          'Genre',
+          genres.map((g) => [g, g]),
+          (key) => searchUi.genres.has(key),
+          (key) => {
+            if (searchUi.genres.has(key)) searchUi.genres.delete(key);
+            else searchUi.genres.add(key);
+          }
+        )
+      : null,
+    h(
+      'div',
+      { class: 'sortbar' },
+      h('label', {}, 'Sort'),
+      sortSelect,
+      h(
+        'button',
+        {
+          type: 'button',
+          class: 'chip',
+          'aria-pressed': String(searchUi.hideTracked),
+          onclick: (event) => {
+            searchUi.hideTracked = !searchUi.hideTracked;
+            event.currentTarget.setAttribute('aria-pressed', String(searchUi.hideTracked));
+            paintResults(host);
+          },
+        },
+        'Hide tracked'
+      )
+    )
+  );
+}
+
+function paintResults(host) {
+  const shown = applySearch(lastResults, { ...searchUi, items: state.items });
+
+  fill(host,
+    searchFilters(host),
+    shown.length
+      ? grid(shown, storedFor, openItem)
+      : emptyState({
+          iconName: 'search',
+          title: 'Nothing left',
+          body:
+            'No results match those filters. Filters only narrow what this search ' +
+            'returned — for browsing a whole genre, use the Genres tab.',
+        })
+  );
 }
 
 function renderNeedsKey(host) {

@@ -153,7 +153,7 @@ await shot('05-movie-rated-watched');
 await page.click('.cast-member');
 await page.waitForTimeout(700);
 await shot('06-person');
-await page.selectOption('.sortbar select', 'year-asc');
+await page.selectOption('.sheet .sortbar select', 'year-asc');
 await page.waitForTimeout(300);
 const glyph = page.locator('.film > svg').first();
 if (await glyph.count()) {
@@ -268,9 +268,58 @@ for (const [query, rating] of [['squid', 'up'], ['spirited', 'once'], ['pulp', '
   await page.waitForTimeout(500);
 }
 
+/* ---- 7a. search filters ---- */
+// "st" spans both media in the fixtures — a movies-only query would prove
+// nothing about the filter.
+await page.fill('input[type="search"]', 'st');
+await page.waitForTimeout(900);
+const searchAll = await page.locator('.grid .tile .t-name').allTextContents();
+const searchMeta = await page.locator('.grid .tile .t-meta').allTextContents();
+console.log('search "st" ->', searchAll.join(', '));
+if (!(await page.locator('.search-filters').count())) {
+  problems.push('the search filter block did not appear with results');
+}
+if (!searchMeta.some((m) => /season/i.test(m))) {
+  problems.push('the search fixture returned no TV, so the type filter proves nothing');
+}
+
+await page.locator('.search-filters .filter-row .chip', { hasText: 'Movies' }).first().click();
+await page.waitForTimeout(600);
+const filmsOnly = await page.locator('.grid .tile .t-meta').allTextContents();
+console.log('films only ->', filmsOnly.length, 'of', searchAll.length);
+if (filmsOnly.some((m) => /season/i.test(m))) {
+  problems.push('a TV result survived the Movies filter');
+}
+if (!filmsOnly.length || filmsOnly.length >= searchAll.length) {
+  problems.push('the Movies filter did not narrow the results');
+}
+await shot('12a-search-filters');
+
+// sorting reorders without changing the set
+await page.selectOption('.search-filters .sortbar select', 'newest');
+await page.waitForTimeout(500);
+const newestFirst = await page.locator('.grid .tile .t-meta').allTextContents();
+const years = newestFirst.map((m) => parseInt(m, 10)).filter(Number.isFinite);
+console.log('years newest-first ->', years.join(', '));
+for (let i = 1; i < years.length; i++) {
+  if (years[i] > years[i - 1]) {
+    problems.push(`newest sort is out of order: ${years.join(', ')}`);
+    break;
+  }
+}
+
+/* ---- 7b. a second tap on Browse clears the search ---- */
+await page.click('.tab[data-tab="browse"]');
+await page.waitForTimeout(900);
+const fieldAfter = await page.inputValue('input[type="search"]');
+console.log('search field after second Browse tap ->', JSON.stringify(fieldAfter));
+if (fieldAfter !== '') problems.push(`the second Browse tap did not clear the field: "${fieldAfter}"`);
+if (await page.locator('.search-filters').count()) {
+  problems.push('the search filters survived clearing the search');
+}
+
 /* ---- 8. recommendations on browse ---- */
-await page.click('.searchbar .s-clear');
-await page.waitForTimeout(1400);
+await page.waitForTimeout(1000);
 await shot('13-browse-recommendations');
 
 /* ---- 9. lists ---- */
@@ -286,25 +335,90 @@ await page.selectOption('.sortbar select', 'imdb');
 await page.waitForTimeout(1200);
 await shot('16-lists-imdb');
 
-await page.click('.chips .chip:nth-child(2)'); // Watchlist
+await page.locator('.filter-row[data-group="status"] .chip', { hasText: 'Watchlist' }).click();
 await page.waitForTimeout(400);
 await shot('17-lists-watchlist');
 
-/* ---- 10. hiding "not for me" titles ---- */
+/* ---- 9a. filters combine: within a group widens, across groups narrows ---- */
+const listTitles = () => page.locator('.grid .tile .t-name').allTextContents();
+const listChip = (group, name) =>
+  page.locator(`.filter-row[data-group="${group}"] .chip`, { hasText: name });
 
-const chip = (name) => page.locator('.chips .chip', { hasText: name });
-const listedTitles = () => page.locator('.grid .tile .t-name').allTextContents();
-
-await chip('All').click();
-await page.selectOption('.sortbar select', 'title');
+await page.locator('.chip.clear-filters').click();
 await page.waitForTimeout(400);
-const before = await listedTitles();
-console.log('lists before hiding ->', before.join(', '));
-if (!before.includes('Pulp Fiction')) {
-  problems.push('the disliked title was missing before hiding was even enabled');
+const allTracked = await listTitles();
+console.log('lists, no filters ->', allTracked.join(', '));
+
+// Disliked titles are hidden by default now, without touching Settings.
+if (allTracked.includes('Pulp Fiction')) {
+  problems.push('a "Not for me" title showed with the new default in place');
 }
 
-// flip the setting
+await listChip('type', 'Movies').click();
+await page.waitForTimeout(400);
+const moviesOnly = await listTitles();
+await listChip('type', 'TV').click();
+await page.waitForTimeout(400);
+const bothTypes = await listTitles();
+console.log('movies ->', moviesOnly.join(', '), '| + TV ->', bothTypes.join(', '));
+if (bothTypes.length <= moviesOnly.length) {
+  problems.push('adding a second chip in the same group did not widen the results');
+}
+
+// Now narrow across groups: films that are also liked.
+await listChip('type', 'TV').click();
+await page.waitForTimeout(300);
+await listChip('rating', 'Liked').click();
+await page.waitForTimeout(400);
+const likedFilms = await listTitles();
+console.log('liked films ->', likedFilms.join(', '));
+if (likedFilms.length > moviesOnly.length) {
+  problems.push('adding a chip from another group did not narrow the results');
+}
+for (const title of likedFilms) {
+  if (!moviesOnly.includes(title)) problems.push(`${title} is not a film but survived Movies+Liked`);
+}
+await shot('17a-lists-multi-filter');
+
+// The "Not for me" chip still reveals hidden titles.
+await page.locator('.chip.clear-filters').click();
+await page.waitForTimeout(300);
+await listChip('rating', 'Not for me').click();
+await page.waitForTimeout(400);
+const revealed = await listTitles();
+console.log('not-for-me chip ->', revealed.join(', '));
+if (!revealed.includes('Pulp Fiction')) {
+  problems.push('the "Not for me" chip no longer reveals hidden titles');
+}
+await page.locator('.chip.clear-filters').click();
+await page.waitForTimeout(300);
+
+/* ---- 9b. tapping the active tab ---- */
+await page.evaluate(() => window.scrollTo(0, 400));
+await page.waitForTimeout(300);
+const scrolledTo = await page.evaluate(() => window.scrollY);
+await page.click('.tab[data-tab="lists"]');
+await page.waitForTimeout(900);
+const afterTap = await page.evaluate(() => window.scrollY);
+console.log('scroll before tab tap ->', scrolledTo, 'after ->', afterTap);
+if (scrolledTo > 0 && afterTap !== 0) {
+  problems.push(`tapping the active tab did not scroll to top (${scrolledTo} -> ${afterTap})`);
+}
+
+/* ---- 10. the hide setting still works in both directions ---- */
+
+const listedTitles = () => page.locator('.grid .tile .t-name').allTextContents();
+
+await page.selectOption('.sortbar select', 'title');
+await page.waitForTimeout(400);
+const hiddenByDefault = await listedTitles();
+console.log('lists, default settings ->', hiddenByDefault.join(', '));
+if (hiddenByDefault.includes('Pulp Fiction')) {
+  problems.push('a disliked title is showing even though hiding is now the default');
+}
+await shot('19-lists-hiding-disliked');
+
+// turning the setting off brings them back
 await page.click('.icon-btn[aria-label="Settings"]');
 await page.waitForTimeout(700);
 await page.locator('.sheet button.action', { hasText: 'Not for me' }).click();
@@ -313,16 +427,25 @@ await shot('18-settings');
 await page.goBack();
 await page.waitForTimeout(700);
 
-const after = await listedTitles();
-console.log('lists after hiding ->', after.join(', '));
-if (after.includes('Pulp Fiction')) problems.push('the disliked title is still listed after hiding');
-if (after.length !== before.length - 1) {
-  problems.push(`expected exactly one title hidden, went from ${before.length} to ${after.length}`);
+const shownAgain = await listedTitles();
+console.log('lists, hiding turned off ->', shownAgain.join(', '));
+if (!shownAgain.includes('Pulp Fiction')) {
+  problems.push('turning the hide setting off did not bring the disliked title back');
 }
-await shot('19-lists-hiding-disliked');
+if (shownAgain.length !== hiddenByDefault.length + 1) {
+  problems.push(`expected exactly one more title, went from ${hiddenByDefault.length} to ${shownAgain.length}`);
+}
 
-// the escape hatch must still reach it
-await chip('Not for me').click();
+// put it back to the default for the rest of the run
+await page.click('.icon-btn[aria-label="Settings"]');
+await page.waitForTimeout(700);
+await page.locator('.sheet button.action', { hasText: 'Not for me' }).click();
+await page.waitForTimeout(300);
+await page.goBack();
+await page.waitForTimeout(700);
+
+// the escape hatch still reaches a hidden title
+await listChip('rating', 'Not for me').click();
 await page.waitForTimeout(400);
 const escaped = await listedTitles();
 console.log('"not for me" chip ->', escaped.join(', '));
@@ -332,7 +455,9 @@ if (!escaped.includes('Pulp Fiction')) {
 await shot('20-lists-not-for-me-chip');
 
 // and the middle rating carries its badge through to the list
-await chip('One and done').click();
+await page.locator('.chip.clear-filters').click();
+await page.waitForTimeout(300);
+await listChip('rating', 'One and done').click();
 await page.waitForTimeout(400);
 const onceListed = await listedTitles();
 console.log('"one and done" chip ->', onceListed.join(', '));
@@ -471,6 +596,18 @@ await page.goBack();
 await page.waitForTimeout(700);
 if (!(await page.locator('.genre-tile').count())) {
   problems.push('back from a genre did not return to the genre grid');
+}
+
+// ...and so must tapping the Genres tab while inside a genre
+await page.locator('.genre-tile', { hasText: 'Comedy' }).first().click();
+await page.waitForTimeout(1000);
+if (await page.locator('.genre-tile').count()) {
+  problems.push('opening a genre did not replace the grid');
+}
+await page.click('.tab[data-tab="genres"]');
+await page.waitForTimeout(900);
+if (!(await page.locator('.genre-tile').count())) {
+  problems.push('tapping the active Genres tab did not return to the genre grid');
 }
 
 /* the Anime tile is AniList-sourced */

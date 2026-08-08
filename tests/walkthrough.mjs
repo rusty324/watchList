@@ -1159,14 +1159,14 @@ const firstPage = await bulkNames();
 console.log(
   'page 1 ->', firstPage.length, 'tiles,',
   await bp.locator('.section-sub').first().textContent(),
-  '| pages:', await bp.locator('.pager').getAttribute('data-pages')
+  '| pages:', await bp.locator('.pager:not(.compact)').getAttribute('data-pages')
 );
 if (firstPage.length !== 50) {
   problems.push(`page 1 rendered ${firstPage.length} tiles, expected 50`);
 }
 // The point of the whole change: the DOM must not carry the whole library.
 if ((await bulkCount()) > 50) problems.push('more than a page of tiles reached the DOM');
-if ((await bp.locator('.pager').getAttribute('data-pages')) !== '3') {
+if ((await bp.locator('.pager:not(.compact)').getAttribute('data-pages')) !== '3') {
   problems.push('120 titles did not come to 3 pages of 50');
 }
 if (firstPage[0] !== 'Synthetic 0000') {
@@ -1174,7 +1174,63 @@ if (firstPage[0] !== 'Synthetic 0000') {
 }
 await bp.screenshot({ path: `${OUT}/31-lists-paged.png` });
 
-await bp.click('.pager .page-step[aria-label="Next page"]');
+// Page controls sit in two places: beside Sort, and under the grid.
+if ((await bp.locator('.pager').count()) !== 2) {
+  problems.push(`expected a pager above and below the grid, found ${await bp.locator('.pager').count()}`);
+}
+if ((await bp.locator('.sortbar .pager.compact').count()) !== 1) {
+  problems.push('the Sort row has no page controls');
+}
+// The crowded row is the risk: Sort's longest label plus arrows plus a
+// position readout, on a 390px screen.
+await bp.selectOption('.sortbar select', 'unseen');
+await bp.waitForTimeout(600);
+const sortRow = await bp.evaluate(() => {
+  const bar = document.querySelector('.sortbar');
+  const box = bar.getBoundingClientRect();
+  const kids = [...bar.children].map((el) => el.getBoundingClientRect());
+  const sel = bar.querySelector('select');
+  return {
+    barRight: box.right,
+    rightmost: Math.max(...kids.map((r) => r.right)),
+    // Centres, not tops: the row centres items of different heights, so equal
+    // tops would be the wrong thing to ask for. Drift here means a wrap.
+    centreSpread: Math.max(...kids.map((r) => r.top + r.height / 2))
+      - Math.min(...kids.map((r) => r.top + r.height / 2)),
+    tallest: Math.max(...kids.map((r) => r.height)),
+    barHeight: box.height,
+    truncated: sel.scrollWidth > sel.clientWidth + 1,
+    label: sel.selectedOptions[0].textContent,
+  };
+});
+console.log('sort row ->', JSON.stringify(sortRow));
+if (sortRow.centreSpread > 2) problems.push('the Sort row wrapped onto more than one line');
+if (sortRow.barHeight > sortRow.tallest + 2) problems.push('the Sort row is taller than its tallest control');
+if (sortRow.rightmost > sortRow.barRight + 1) problems.push('the page controls overflow the Sort row');
+if (sortRow.truncated) problems.push(`the sort label is being cut off: "${sortRow.label}"`);
+await bp.selectOption('.sortbar select', 'title');
+await bp.waitForTimeout(600);
+
+// Turning from the top control has to move the bottom one, and the count line.
+await bp.click('.sortbar .page-step[aria-label="Next page"]');
+await bp.waitForTimeout(800);
+console.log(
+  'after the top Next ->', await bp.locator('.page-of').textContent(),
+  '| bottom', await bp.locator('.pager:not(.compact)').getAttribute('data-page'),
+  '|', await bp.locator('.section-sub').first().textContent()
+);
+if ((await bp.locator('.page-of').textContent()) !== '2/3') {
+  problems.push('the top page readout did not advance');
+}
+if ((await bp.locator('.pager:not(.compact)').getAttribute('data-page')) !== '2') {
+  problems.push('the two pagers drifted out of step');
+}
+await bp.screenshot({ path: `${OUT}/34-lists-top-pager.png` });
+// Back to page 1 for the boundary checks below.
+await bp.click('.sortbar .page-step[aria-label="Previous page"]');
+await bp.waitForTimeout(800);
+
+await bp.click('.pager:not(.compact) .page-step[aria-label="Next page"]');
 await bp.waitForTimeout(800);
 const secondPage = await bulkNames();
 console.log('page 2 ->', secondPage.length, 'tiles, first:', secondPage[0]);
@@ -1191,12 +1247,12 @@ if ((await bp.evaluate(() => window.scrollY)) !== 0) {
 }
 
 // The last page is the remainder, and Next is spent.
-await bp.click('.pager .page-step[aria-label="Next page"]');
+await bp.click('.pager:not(.compact) .page-step[aria-label="Next page"]');
 await bp.waitForTimeout(800);
 const lastPage = await bulkNames();
 console.log('page 3 ->', lastPage.length, 'tiles, last:', lastPage.at(-1));
 if (lastPage.length !== 20) problems.push(`last page rendered ${lastPage.length} tiles, expected 20`);
-if (!(await bp.locator('.pager .page-step[aria-label="Next page"]').isDisabled())) {
+if (!(await bp.locator('.pager:not(.compact) .page-step[aria-label="Next page"]').isDisabled())) {
   problems.push('Next is still enabled on the last page');
 }
 
@@ -1218,7 +1274,7 @@ await bp.waitForTimeout(700);
 await bp.selectOption('.pager .page-pick', '3');
 await bp.waitForTimeout(800);
 console.log('jumped to ->', await bp.locator('.section-sub').first().textContent());
-if ((await bp.locator('.pager').getAttribute('data-page')) !== '3') {
+if ((await bp.locator('.pager:not(.compact)').getAttribute('data-page')) !== '3') {
   problems.push('the page picker did not jump to the chosen page');
 }
 await bp.screenshot({ path: `${OUT}/32-lists-last-page.png` });

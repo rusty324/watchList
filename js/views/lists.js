@@ -32,6 +32,9 @@ import { openSettings } from './settings.js';
 
 const ui = { filters: emptyFilters(), sort: 'title', query: '', page: 1 };
 let sweeping = false;
+// Lives beside the Sort control, above the grid. Held here because draw() has
+// to refill it and only knows about the results container.
+let topPagerSlot = null;
 
 /** Anything that changes which titles match has to send you back to page 1. */
 function resetPage() {
@@ -210,6 +213,8 @@ export function renderLists(root) {
     )
   );
 
+  topPagerSlot = h('div', { class: 'pager-slot' });
+
   const filterInput = h('input', {
     type: 'search',
     placeholder: 'Filter your list',
@@ -243,7 +248,7 @@ export function renderLists(root) {
     ),
     h('div', { class: 'searchbar' }, icon('search', 's-icon'), filterInput),
     filterBlock,
-    h('div', { class: 'sortbar' }, h('label', {}, 'Sort'), sortSelect),
+    h('div', { class: 'sortbar' }, h('label', {}, 'Sort'), sortSelect, topPagerSlot),
     results
   );
 
@@ -264,13 +269,20 @@ function emptyReason() {
 }
 
 /**
- * Previous / page picker / Next.
+ * Previous / page / Next, in two sizes.
  *
- * The picker is a select rather than a row of numbers because a four-figure
- * library runs to twenty-odd pages, which is more than fits across a phone —
- * and stepping to page 14 with a Next button is nobody's idea of a good time.
+ * It renders twice: below the grid, where you arrive after reading a page, and
+ * beside the Sort control, so turning a page never means scrolling past fifty
+ * posters to reach the button. Both are rebuilt on every draw, so neither can
+ * drift out of step with the other.
+ *
+ * The bottom one picks pages from a select rather than a row of numbers,
+ * because a four-figure library runs to twenty-odd pages — more than fits
+ * across a phone, and stepping to page 14 with a Next button is nobody's idea
+ * of a good time. The top one has no room for that next to a sort menu, so it
+ * shows the position and leaves jumping to its twin.
  */
-function pager(host, total, pages) {
+function pager(host, total, pages, { compact = false } = {}) {
   if (pages < 2) return null;
 
   const go = (page) => {
@@ -305,11 +317,22 @@ function pager(host, total, pages) {
     )
   );
 
+  const middle = compact
+    ? h(
+        'span',
+        { class: 'page-of', 'aria-label': `Page ${ui.page} of ${pages}` },
+        `${ui.page}/${pages}`
+      )
+    : picker;
+
   return h(
     'div',
-    { class: 'pager', dataset: { page: String(ui.page), pages: String(pages) } },
+    {
+      class: `pager${compact ? ' compact' : ''}`,
+      dataset: { page: String(ui.page), pages: String(pages) },
+    },
     step('Previous page', 'back', -1, ui.page <= 1),
-    picker,
+    middle,
     step('Next page', 'forward', 1, ui.page >= pages)
   );
 }
@@ -335,6 +358,7 @@ function draw(host) {
             body: 'Search on the Browse tab, then mark things watched or add them to your watchlist.',
           })
     );
+    if (topPagerSlot) fill(topPagerSlot);
     return;
   }
 
@@ -364,6 +388,9 @@ function draw(host) {
       : h('div', { class: 'grid' }, shown.map((i) => tile(i, storedFor(i), openItem)));
 
   fill(host, count, body, pager(host, items.length, pages));
+  // The twin beside the Sort control, so turning a page doesn't mean scrolling
+  // past a screenful of posters first.
+  if (topPagerSlot) fill(topPagerSlot, pager(host, items.length, pages, { compact: true }));
 
   // Deliberately the whole filtered list, not this page: sorting by IMDb is
   // only correct if the scores exist for everything being sorted, so the

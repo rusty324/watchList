@@ -178,9 +178,14 @@ your region in Settings clears it.
 
 ### Long lists
 
-The Lists tab shows **50 titles a page**, with Previous / Next and a picker to
-jump. Anything that changes what matches — a filter, a sort, the filter box —
-takes you back to page 1, and turning a page returns you to the top.
+The Lists tab shows **50 titles a page**. The page controls appear twice — a
+compact pair beside the Sort menu and a full set under the grid — so turning a
+page never means scrolling past fifty posters to reach a button. The bottom one
+carries a picker to jump straight to a page; the top one has no room for that
+next to a sort menu, so it shows your position and leaves jumping to its twin.
+
+Anything that changes what matches — a filter, a sort, the filter box — takes
+you back to page 1, and turning a page returns you to the top.
 
 This is a performance measure, not a tidiness one. Filtering and sorting a
 four-figure library costs about **3 ms**; building the tiles is what hurts,

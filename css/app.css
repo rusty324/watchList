@@ -236,6 +236,22 @@ svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; 
 .page-step svg { width: 20px; height: 20px; }
 .page-step[disabled] { opacity: 0.35; }
 
+/* The twin beside the Sort control. It shares a row with a select, so it drops
+ * the page picker for a plain position readout and shrinks its buttons — still
+ * past the 36px that reads as tappable, just not the full 44. */
+.pager-slot { flex: 0 0 auto; display: flex; }
+.sortbar .pager.compact { margin: 0; gap: 4px; }
+.pager.compact .page-step { width: 38px; height: 38px; }
+.pager.compact .page-step svg { width: 18px; height: 18px; }
+.page-of {
+  min-width: 42px;
+  text-align: center;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--fg-dim);
+  font-variant-numeric: tabular-nums; /* so the row doesn't jitter on 9 -> 10 */
+}
+
 /* Why a title you searched for isn't showing up anywhere else. */
 .hidden-note {
   display: flex;

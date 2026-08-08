@@ -1,3 +1,6 @@
-node_modules/
+# No trailing slash: `node_modules/` matches a directory only, and installing
+# playwright-core somewhere else leaves a symlink here, which then shows up as
+# untracked.
+node_modules
 package-lock.json
 tests/shots/

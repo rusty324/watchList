@@ -2,39 +2,98 @@
 
 import { h, icon, clear, fill, tile, emptyState, toast } from '../ui.js';
 import { state, getItem } from '../store.js';
-import { FILTERS, SORTS, applyList, groupByGenre, trackedItems } from '../sort.js';
+import {
+  FILTER_GROUPS,
+  SORTS,
+  applyList,
+  groupByGenre,
+  trackedItems,
+  emptyFilters,
+  anyFilterActive,
+  genreOptions,
+} from '../sort.js';
 import { backfillScores, hasOmdbKey } from '../omdb.js';
 import { openItem } from './detail.js';
 import { openSettings } from './settings.js';
 
-const ui = { filter: 'all', sort: 'title', query: '' };
+const ui = { filters: emptyFilters(), sort: 'title', query: '' };
 
 export function renderLists(root) {
   clear(root);
 
   const results = h('div', {});
+  let filterBlock = null;
 
-  const chips = h(
-    'div',
-    { class: 'chips' },
-    Object.entries(FILTERS).map(([key, f]) =>
-      h(
-        'button',
-        {
-          type: 'button',
-          class: 'chip',
-          'aria-pressed': String(ui.filter === key),
-          onclick: (event) => {
-            ui.filter = key;
-            for (const c of chips.children) c.setAttribute('aria-pressed', 'false');
-            event.currentTarget.setAttribute('aria-pressed', 'true');
-            draw(results);
-          },
+  /** One labelled, horizontally-scrolling row per group. */
+  function buildFilters() {
+    const rows = [];
+
+    for (const [groupKey, group] of Object.entries(FILTER_GROUPS)) {
+      const options = group.dynamic
+        ? genreOptions(state.items).map((g) => [g.name, { label: g.name }])
+        : Object.entries(group.options);
+
+      // A genre row with nothing (or one thing) in it is just noise.
+      if (!options.length || (group.dynamic && options.length < 2)) continue;
+
+      rows.push(
+        h(
+          'div',
+          { class: 'filter-row', dataset: { group: groupKey } },
+          h('span', { class: 'f-label' }, group.label),
+          h(
+            'div',
+            { class: 'chips' },
+            options.map(([key, option]) =>
+              h(
+                'button',
+                {
+                  type: 'button',
+                  class: 'chip',
+                  dataset: { group: groupKey, key },
+                  'aria-pressed': String(ui.filters[groupKey].has(key)),
+                  onclick: (event) => {
+                    const set = ui.filters[groupKey];
+                    if (set.has(key)) set.delete(key);
+                    else set.add(key);
+                    event.currentTarget.setAttribute('aria-pressed', String(set.has(key)));
+                    refreshFilters();
+                    draw(results);
+                  },
+                },
+                option.label
+              )
+            )
+          )
+        )
+      );
+    }
+
+    const clearBtn = h(
+      'button',
+      {
+        type: 'button',
+        class: 'chip clear-filters',
+        hidden: !anyFilterActive(ui.filters),
+        onclick: () => {
+          ui.filters = emptyFilters();
+          refreshFilters();
+          draw(results);
         },
-        f.label
-      )
-    )
-  );
+      },
+      'Clear filters'
+    );
+
+    return h('div', { class: 'filters' }, rows, clearBtn);
+  }
+
+  function refreshFilters() {
+    const next = buildFilters();
+    filterBlock.replaceWith(next);
+    filterBlock = next;
+  }
+
+  filterBlock = buildFilters();
 
   const sortSelect = h(
     'select',
@@ -76,7 +135,7 @@ export function renderLists(root) {
       )
     ),
     h('div', { class: 'searchbar' }, icon('search', 's-icon'), filterInput),
-    chips,
+    filterBlock,
     h('div', { class: 'sortbar' }, h('label', {}, 'Sort'), sortSelect),
     results
   );
@@ -94,7 +153,7 @@ function draw(host) {
             iconName: 'bookmark',
             title: 'Nothing here',
             body:
-              state.settings.hideDisliked && ui.filter !== 'disliked'
+              state.settings.hideDisliked && !ui.filters.rating.has('disliked')
                 ? 'No titles match this filter. “Not for me” titles are hidden — the “Not for me” chip still shows them.'
                 : 'No titles match this filter.',
           })

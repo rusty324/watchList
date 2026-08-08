@@ -90,6 +90,17 @@ for (const b of btnBoxes) {
   }
 }
 
+// An inline SVG with no CSS size fills its container instead of sitting in the
+// row — invisible to every other assertion here, so it gets its own.
+const looseGlyphs = await page.locator('.sheet-body svg').evaluateAll((els) =>
+  els
+    .map((el) => ({ cls: el.parentElement?.className || '?', box: el.getBoundingClientRect() }))
+    .filter((g) => g.box.width > 40 || g.box.height > 40)
+    .map((g) => `${g.cls}:${Math.round(g.box.width)}x${Math.round(g.box.height)}`)
+);
+console.log('oversized glyphs on the sheet ->', looseGlyphs.length ? looseGlyphs.join(', ') : 'none');
+for (const glyph of looseGlyphs) problems.push(`an unconstrained icon on the detail sheet: ${glyph}`);
+
 /* ---- where to watch ---- */
 const rowNames = async (row) =>
   page.locator(`.prov-row[data-row="${row}"] .p-name`).allTextContents();
@@ -325,6 +336,10 @@ await shot('13-browse-recommendations');
 /* ---- 9. lists ---- */
 await page.click('.tab[data-tab="lists"]');
 await page.waitForTimeout(600);
+// Six fixture titles fit on one page, so the pager must stay out of the way.
+if (await page.locator('.pager').count()) {
+  problems.push('a pager appeared for a list that fits on one page');
+}
 await shot('14-lists-title');
 
 await page.selectOption('.sortbar select', 'genre');
@@ -520,6 +535,40 @@ if (await page.locator('.sheet').count()) {
   await page.waitForTimeout(700);
 }
 
+// The options open around the finger, not around the tile. Press near the
+// bottom of a tall poster, where the two placements are furthest apart.
+{
+  const box = await holdTarget.boundingBox();
+  const pressY = box.y + box.height - 30;
+  await page.mouse.move(box.x + box.width / 2, pressY);
+  await page.mouse.down();
+  await page.waitForTimeout(650);
+
+  const gap = await page.locator('.rate-gap').boundingBox();
+  const gapCentre = gap.y + gap.height / 2;
+  console.log(
+    'press y', Math.round(pressY),
+    '| finger gap centre', Math.round(gapCentre),
+    '| tile top', Math.round(box.y)
+  );
+  if (Math.abs(gapCentre - pressY) > 2) {
+    problems.push(`the options did not open around the finger: gap at ${Math.round(gapCentre)}, pressed at ${Math.round(pressY)}`);
+  }
+  const kinds = await page.locator('.rate-opt').evaluateAll((els) => els.map((e) => e.dataset.kind));
+  if (kinds.join(',') !== 'up,once,down,hide') {
+    problems.push(`wrong options offered: ${kinds.join(',')}`);
+  }
+
+  // Releasing without sliding must commit nothing. This matters more than it
+  // used to: clamping at a screen edge can leave an option under a stationary
+  // fingertip, and that must never count as a choice.
+  await page.mouse.up();
+  await page.waitForTimeout(700);
+  if (await page.locator('.grid .tile').first().locator('.badge').count()) {
+    problems.push('releasing without sliding still applied a rating');
+  }
+}
+
 // hold, drag onto "Liked it", release
 await press(650);
 if (!(await page.locator('.rate-pop.in').count())) {
@@ -561,6 +610,365 @@ await page.waitForTimeout(700);
 if (await page.locator('.grid .tile').first().locator('.badge').count()) {
   problems.push('releasing away from the options still applied a rating');
 }
+
+/* ---- 10b. filtering the list by streaming and rent/buy platform ---- */
+
+// Rate a show without ever opening its sheet. Every other tracked title had its
+// availability recorded for free when its sheet loaded, so this is the only one
+// the backfill sweep can be shown to have found — which is what makes the test
+// mean anything.
+await page.fill('input[type="search"]', 'stranger');
+await page.waitForTimeout(900);
+{
+  const box = await page.locator('.grid .tile').first().boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.waitForTimeout(650);
+  if (!(await page.locator('.rate-opt[data-kind="up"]').count())) {
+    problems.push('could not press-and-hold to rate a title without opening it');
+    await page.mouse.up();
+  } else {
+    const opt = await page.locator('.rate-opt[data-kind="up"]').boundingBox();
+    await page.mouse.move(opt.x + opt.width / 2, opt.y + opt.height / 2, { steps: 6 });
+    await page.waitForTimeout(150);
+    await page.mouse.up();
+    await page.waitForTimeout(900);
+  }
+}
+
+await page.click('.tab[data-tab="lists"]');
+await page.waitForTimeout(900);
+// Section 10 left the "One and done" chip on.
+if (await page.locator('.chip.clear-filters:not([hidden])').count()) {
+  await page.locator('.chip.clear-filters').click();
+  await page.waitForTimeout(400);
+}
+if (!(await listedTitles()).includes('Stranger Things')) {
+  problems.push('the long-press rating did not add the title to the list');
+}
+
+const platformChips = (group) =>
+  page.locator(`.filter-row[data-group="${group}"] .chip`).allTextContents();
+const platChip = (group, name) =>
+  page.locator(`.filter-row[data-group="${group}"] .chip`, { hasText: name }).first();
+
+// The unchecked title is advertised rather than silently excluded.
+const checkLabel = await page.locator('.avail-check').textContent();
+console.log('availability control ->', checkLabel);
+if (!/\b1\b/.test(checkLabel)) {
+  problems.push(`the availability control did not offer to check the 1 missing title: "${checkLabel}"`);
+}
+await shot('21c-lists-availability-prompt');
+
+// Unchecked means unmatched: "not known to be on Netflix" is not "on Netflix".
+await platChip('stream', 'Netflix').click();
+await page.waitForTimeout(500);
+const netflixBefore = await listedTitles();
+console.log('on Netflix, before the sweep ->', netflixBefore.join(', '));
+if (netflixBefore.includes('Stranger Things')) {
+  problems.push('an unchecked title matched a platform filter');
+}
+await page.locator('.chip.clear-filters').click();
+await page.waitForTimeout(400);
+
+await page.locator('.avail-check').click();
+await page.waitForTimeout(1800);
+if (await page.locator('.avail-check').count()) {
+  problems.push('the availability control stayed after everything had been checked');
+}
+
+// The label column is a fixed width shared by every row, and the platform rows
+// carry the longest labels — so this is where a label would first collide with
+// the chips it labels.
+// The column has a fixed width, so a long label overflows its box rather than
+// widening it — measure the rendered text, not the box.
+const rowGeometry = await page.locator('.filter-row').evaluateAll((rows) =>
+  rows.map((r) => {
+    const el = r.querySelector('.f-label');
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const ink = range.getBoundingClientRect();
+    const chips = r.querySelector('.chips').getBoundingClientRect();
+    return {
+      group: r.dataset.group,
+      slack: Math.round(chips.left - ink.right),
+      chipX: Math.round(chips.left),
+    };
+  })
+);
+console.log('label-to-chip slack ->', rowGeometry.map((g) => `${g.group}:${g.slack}`).join(' '));
+for (const row of rowGeometry) {
+  if (row.slack < 6) {
+    problems.push(`the ${row.group} label leaves only ${row.slack}px before its chips`);
+  }
+}
+if (new Set(rowGeometry.map((g) => g.chipX)).size !== 1) {
+  problems.push(`filter rows are not aligned: chips start at ${rowGeometry.map((g) => g.chipX).join(', ')}`);
+}
+
+const streamChips = await platformChips('stream');
+const buyChips = await platformChips('buy');
+console.log('stream chips ->', streamChips.join(', '));
+console.log('rent/buy chips ->', buyChips.join(', '));
+if (!streamChips.includes('Netflix')) problems.push('the Stream row is missing Netflix');
+if (!buyChips.includes('Apple TV')) problems.push('the Rent/buy row is missing Apple TV');
+// Ad-supported folds into Stream rather than becoming a fifth group.
+if (!streamChips.includes('Tubi TV')) {
+  problems.push(`free/ad-supported services did not fold into Stream: ${streamChips.join('|')}`);
+}
+
+await platChip('stream', 'Netflix').click();
+await page.waitForTimeout(500);
+const netflixAfter = await listedTitles();
+console.log('on Netflix, after the sweep ->', netflixAfter.join(', '));
+if (!netflixAfter.includes('Stranger Things')) {
+  problems.push('the backfill did not reach the title whose sheet was never opened');
+}
+// Titles that stream nowhere stay out whether or not they have been checked.
+for (const gone of ['The Princess Bride', 'Spirited Away']) {
+  if (netflixAfter.includes(gone)) {
+    problems.push(`${gone} streams nowhere but survived a Stream filter`);
+  }
+}
+
+// Within the group it widens. Start from the narrow service, since Hulu's one
+// title is also on Netflix and the other order would prove nothing.
+await platChip('stream', 'Netflix').click();
+await page.waitForTimeout(400);
+await platChip('stream', 'Hulu').click();
+await page.waitForTimeout(500);
+const huluOnly = await listedTitles();
+await platChip('stream', 'Netflix').click();
+await page.waitForTimeout(500);
+const eitherService = await listedTitles();
+console.log('Hulu ->', huluOnly.join(', '), '| + Netflix ->', eitherService.join(', '));
+if (eitherService.length <= huluOnly.length) {
+  problems.push('a second service in the Stream group did not widen the results');
+}
+await shot('21d-lists-platform-filter');
+
+// Across groups it narrows, same as every other pair.
+await platChip('buy', 'Apple TV').click();
+await page.waitForTimeout(500);
+const streamAndRent = await listedTitles();
+console.log('streamable, and rentable from Apple ->', streamAndRent.join(', '));
+if (streamAndRent.length >= eitherService.length) {
+  problems.push('adding a Rent/buy chip did not narrow a Stream selection');
+}
+for (const title of streamAndRent) {
+  if (!eitherService.includes(title)) problems.push(`${title} survived a filter it should not have`);
+}
+
+// The two groups read different buckets: a title you can only stream must not
+// answer a Rent/buy filter.
+await page.locator('.chip.clear-filters').click();
+await page.waitForTimeout(400);
+await platChip('buy', 'Google Play').click();
+await page.waitForTimeout(500);
+const purchasable = await listedTitles();
+console.log('buyable from Google Play ->', purchasable.join(', '));
+if (!purchasable.includes('Squid Game')) {
+  problems.push('a title with a purchase option is missing from the Rent/buy row');
+}
+if (purchasable.includes('Breaking Bad')) {
+  problems.push('a stream-only title answered a Rent/buy filter');
+}
+await page.locator('.chip.clear-filters').click();
+await page.waitForTimeout(400);
+
+/* ---- 10c. hide a title, then get it back ---- */
+
+const listedNow = () => page.locator('.grid .tile .t-name').allTextContents();
+const before = await listedNow();
+const victim = 'Stranger Things';
+if (!before.includes(victim)) problems.push(`${victim} is not in the list to hide`);
+
+// Press and hold it, slide down onto Hide.
+{
+  const target = page.locator('.grid .tile', { hasText: victim }).first();
+  // Six filter rows push the second grid row below the fold, and a press at
+  // off-screen coordinates lands on nothing.
+  await target.scrollIntoViewIfNeeded();
+  await page.waitForTimeout(300);
+  const box = await target.boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.waitForTimeout(650);
+  if (!(await page.locator('.rate-pop.in').count())) {
+    problems.push('press and hold on a Lists tile did not open the options');
+  }
+  const hide = await page.locator('.rate-opt.hide').boundingBox();
+  await page.mouse.move(hide.x + hide.width / 2, hide.y + hide.height / 2, { steps: 8 });
+  await page.waitForTimeout(200);
+  const on = await page.locator('.rate-opt.on').count()
+    ? await page.locator('.rate-opt.on').getAttribute('data-kind')
+    : null;
+  if (on !== 'hide') problems.push(`sliding down highlighted ${on}, not hide`);
+  await page.mouse.up();
+  await page.waitForTimeout(1000);
+}
+
+const afterHide = await listedNow();
+console.log('lists after hiding ->', afterHide.join(', '));
+// Hidden means gone from Lists too, not just from the discovery tabs.
+if (afterHide.includes(victim)) problems.push('a hidden title is still in the Lists tab');
+if (afterHide.length !== before.length - 1) {
+  problems.push(`hiding removed ${before.length - afterHide.length} titles, expected 1`);
+}
+await shot('21e-lists-after-hide');
+
+// Settings is the guaranteed way back, since it is gone from every grid.
+await page.click('.icon-btn[aria-label="Settings"]');
+await page.waitForTimeout(900);
+const hiddenRows = await page.locator('.hidden-row .h-name').allTextContents();
+console.log('settings, hidden titles ->', hiddenRows.join(', '));
+if (!hiddenRows.includes(victim)) {
+  problems.push(`the hidden title is not listed in Settings: ${hiddenRows.join('|')}`);
+}
+await page.locator('.hidden-list').scrollIntoViewIfNeeded();
+await shot('21f-settings-hidden');
+
+await page.locator('.hidden-row', { hasText: victim }).locator('button').click();
+await page.waitForTimeout(500);
+if ((await page.locator('.hidden-row').count()) !== 0) {
+  problems.push('un-hiding did not remove the row from Settings');
+}
+await page.goBack();
+await page.waitForTimeout(900);
+const afterUnhide = await listedNow();
+console.log('lists after un-hiding ->', afterUnhide.join(', '));
+if (!afterUnhide.includes(victim)) problems.push('un-hiding did not bring the title back');
+
+/* ---- 10d. playlists: build one, then rearrange it ---- */
+
+// prompt() is how a playlist gets named; answer it rather than let it hang.
+let promptReply = 'Movie night';
+page.on('dialog', (d) => d.accept(d.type() === 'prompt' ? promptReply : undefined));
+
+const addToPlaylist = async (query, { fresh = false } = {}) => {
+  await page.click('.tab[data-tab="browse"]');
+  await page.waitForTimeout(600);
+  await page.fill('input[type="search"]', query);
+  await page.waitForTimeout(900);
+  await page.click('.grid .tile');
+  await page.waitForTimeout(1100);
+
+  await page.locator('.action-row .action', { hasText: /playlist|^In / }).first().click();
+  await page.waitForTimeout(800);
+  if (fresh) {
+    await page.locator('.sheet-body button', { hasText: 'New playlist with this title' }).click();
+  } else {
+    await page.locator('.sheet-body .action', { hasText: promptReply }).click();
+  }
+  await page.waitForTimeout(600);
+  await page.goBack(); // the picker
+  await page.waitForTimeout(500);
+  await page.goBack(); // the detail sheet
+  await page.waitForTimeout(700);
+};
+
+await addToPlaylist('para', { fresh: true });
+await addToPlaylist('breaking');
+await addToPlaylist('princess');
+
+await page.click('.tab[data-tab="lists"]');
+await page.waitForTimeout(700);
+await page.click('.icon-btn[aria-label="Playlists"]');
+await page.waitForTimeout(900);
+
+const cardNames = await page.locator('.pl-card .pl-name').allTextContents();
+const cardCounts = await page.locator('.pl-card .pl-count').allTextContents();
+console.log('playlist index ->', cardNames.join(', '), '|', cardCounts.join(', '));
+if (!cardNames.includes('Movie night')) problems.push('the new playlist is not on the index');
+if (!cardCounts.some((c) => c.startsWith('3'))) {
+  problems.push(`the playlist should hold 3 titles: ${cardCounts.join('|')}`);
+}
+await shot('35-playlist-index');
+
+await page.locator('.pl-card', { hasText: 'Movie night' }).click();
+await page.waitForTimeout(900);
+const plOrder = () => page.locator('.pl-row .pl-title').allTextContents();
+const built = await plOrder();
+console.log('as built ->', built.join(' | '));
+if (built.length !== 3) problems.push(`expected 3 rows, found ${built.length}`);
+await shot('36-playlist');
+
+// Drag the last row to the top by its handle.
+{
+  const first = await page.locator('.pl-row').first().boundingBox();
+  const handle = await page.locator('.pl-row').last().locator('.drag-handle').boundingBox();
+  await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(handle.x + handle.width / 2, first.y + 6, { steps: 12 });
+  await page.waitForTimeout(250);
+  await page.mouse.up();
+  await page.waitForTimeout(800);
+}
+const dragged = await plOrder();
+console.log('after dragging the last row to the top ->', dragged.join(' | '));
+if (dragged[0] !== built[2]) {
+  problems.push(`dragging did not move the row to the top: ${dragged.join('|')}`);
+}
+if ([...dragged].sort().join('|') !== [...built].sort().join('|')) {
+  problems.push('reordering changed which titles are in the playlist');
+}
+
+// The buttons are the accessible path and must agree with the drag.
+await page.locator('.pl-row').nth(2).locator('.pl-btn[aria-label^="Move"]').first().click();
+await page.waitForTimeout(600);
+const nudged = await plOrder();
+console.log('after the up button ->', nudged.join(' | '));
+if (nudged[1] !== dragged[2] || nudged[2] !== dragged[1]) {
+  problems.push(`the up button did not swap rows 2 and 3: ${nudged.join('|')}`);
+}
+// Move-up on the first row and move-down on the last have nothing to do.
+if (!(await page.locator('.pl-row').first().locator('.pl-btn').first().isDisabled())) {
+  problems.push('move-up is enabled on the first row');
+}
+
+// The order is what has to survive a reload, not just the membership.
+await page.reload({ waitUntil: 'networkidle' });
+await page.waitForTimeout(1400);
+const reloaded = await plOrder();
+console.log('after a reload ->', reloaded.join(' | '));
+if (reloaded.join('|') !== nudged.join('|')) {
+  problems.push(`the order did not persist: ${reloaded.join('|')} vs ${nudged.join('|')}`);
+}
+
+// Watching something leaves it in place, with a tick — it does not drop out.
+await page.locator('.pl-row .pl-open').first().click();
+await page.waitForTimeout(1200);
+await page.locator('.action-row .action', { hasText: 'Watched' }).first().click();
+await page.waitForTimeout(400);
+await page.goBack();
+await page.waitForTimeout(900);
+const afterWatch = await plOrder();
+console.log('after marking the top one watched ->', afterWatch.join(' | '));
+if (afterWatch.join('|') !== reloaded.join('|')) {
+  problems.push('marking a title watched changed the playlist');
+}
+if (!(await page.locator('.pl-row').first().locator('.pl-tick').count())) {
+  problems.push('a watched row is not showing its tick');
+}
+await shot('36a-playlist-watched');
+
+// Removing a title, and deleting the playlist, both stick.
+await page.locator('.pl-row').first().locator('.pl-btn.remove').click();
+await page.waitForTimeout(700);
+if ((await plOrder()).length !== 2) problems.push('removing a row did not shorten the playlist');
+
+await page.locator('button', { hasText: 'Delete playlist' }).click();
+await page.waitForTimeout(1000);
+if (await page.locator('.pl-card').count()) {
+  problems.push('the deleted playlist is still on the index');
+}
+await page.reload({ waitUntil: 'networkidle' });
+await page.waitForTimeout(1200);
+if (await page.locator('.pl-card').count()) {
+  problems.push('the deleted playlist came back after a reload');
+}
+await page.click('.tab[data-tab="lists"]');
+await page.waitForTimeout(700);
 
 /* ---- 11. genres tab ---- */
 const tabLabels = await page.locator('.tab span').allTextContents();
@@ -827,6 +1235,258 @@ await lp.waitForTimeout(900);
 await lp.click('.rating-btn.once');
 await lp.waitForTimeout(250);
 await lp.screenshot({ path: `${OUT}/30-light-tv.png` });
+await light.close();
+
+/* ---- 12. paging a large library ----
+ *
+ * Last, and in its own context: it seeds a synthetic library over localStorage,
+ * which would invalidate every assertion before it. The fixtures hold six
+ * titles, which is the case where the pager must NOT appear — a library big
+ * enough to page is only reachable by writing one. */
+const bulk = await browser.newContext({
+  viewport: { width: 390, height: 844 },
+  deviceScaleFactor: 2,
+  isMobile: true,
+  hasTouch: true,
+  colorScheme: 'dark',
+});
+const bp = await bulk.newPage();
+bp.on('pageerror', (e) => problems.push(`pageerror(bulk): ${e.message}`));
+bp.on('console', (m) => {
+  if (m.type() === 'error') problems.push(`console(bulk): ${m.text()}`);
+});
+
+await bp.goto(BASE, { waitUntil: 'networkidle' });
+const TOTAL = 120;
+await bp.evaluate((n) => {
+  const genres = ['Drama', 'Comedy', 'Thriller', 'Action'];
+  const items = {};
+  for (let i = 0; i < n; i++) {
+    const type = i % 3 === 0 ? 'tv' : 'movie';
+    items[`${type}:${900000 + i}`] = {
+      type,
+      id: 900000 + i,
+      // Zero-padded so title order and index order agree, which is what lets
+      // the page-boundary assertions below be exact.
+      title: `Synthetic ${String(i).padStart(4, '0')}`,
+      year: 1960 + (i % 60),
+      poster: null,
+      genres: [genres[i % genres.length]],
+      rating: i % 7 === 0 ? 'up' : null,
+      watched: true,
+      inWatchlist: false,
+      seasons: {},
+      updatedAt: i,
+    };
+  }
+  localStorage.setItem(
+    'wl.data.v1',
+    JSON.stringify({
+      version: 2,
+      items,
+      settings: { defaultTitleLang: 'en', theme: 'auto', hideDisliked: true, region: 'US', myProviders: [] },
+    })
+  );
+}, TOTAL);
+
+await bp.reload({ waitUntil: 'networkidle' });
+await bp.waitForTimeout(500);
+await bp.click('.tab[data-tab="lists"]');
+await bp.waitForTimeout(1200);
+
+const bulkNames = () => bp.locator('.grid .tile .t-name').allTextContents();
+const bulkCount = () => bp.locator('.grid .tile').count();
+
+const firstPage = await bulkNames();
+console.log(
+  'page 1 ->', firstPage.length, 'tiles,',
+  await bp.locator('.section-sub').first().textContent(),
+  '| pages:', await bp.locator('.pager:not(.compact)').getAttribute('data-pages')
+);
+if (firstPage.length !== 50) {
+  problems.push(`page 1 rendered ${firstPage.length} tiles, expected 50`);
+}
+// The point of the whole change: the DOM must not carry the whole library.
+if ((await bulkCount()) > 50) problems.push('more than a page of tiles reached the DOM');
+if ((await bp.locator('.pager:not(.compact)').getAttribute('data-pages')) !== '3') {
+  problems.push('120 titles did not come to 3 pages of 50');
+}
+if (firstPage[0] !== 'Synthetic 0000') {
+  problems.push(`page 1 does not start at the top of the sort: ${firstPage[0]}`);
+}
+await bp.screenshot({ path: `${OUT}/31-lists-paged.png` });
+
+// Page controls sit in two places: beside Sort, and under the grid.
+if ((await bp.locator('.pager').count()) !== 2) {
+  problems.push(`expected a pager above and below the grid, found ${await bp.locator('.pager').count()}`);
+}
+if ((await bp.locator('.sortbar .pager.compact').count()) !== 1) {
+  problems.push('the Sort row has no page controls');
+}
+// The crowded row is the risk: Sort's longest label plus arrows plus a
+// position readout, on a 390px screen.
+await bp.selectOption('.sortbar select', 'unseen');
+await bp.waitForTimeout(600);
+const sortRow = await bp.evaluate(() => {
+  const bar = document.querySelector('.sortbar');
+  const box = bar.getBoundingClientRect();
+  const kids = [...bar.children].map((el) => el.getBoundingClientRect());
+  const sel = bar.querySelector('select');
+  return {
+    barRight: box.right,
+    rightmost: Math.max(...kids.map((r) => r.right)),
+    // Centres, not tops: the row centres items of different heights, so equal
+    // tops would be the wrong thing to ask for. Drift here means a wrap.
+    centreSpread: Math.max(...kids.map((r) => r.top + r.height / 2))
+      - Math.min(...kids.map((r) => r.top + r.height / 2)),
+    tallest: Math.max(...kids.map((r) => r.height)),
+    barHeight: box.height,
+    truncated: sel.scrollWidth > sel.clientWidth + 1,
+    label: sel.selectedOptions[0].textContent,
+  };
+});
+console.log('sort row ->', JSON.stringify(sortRow));
+if (sortRow.centreSpread > 2) problems.push('the Sort row wrapped onto more than one line');
+if (sortRow.barHeight > sortRow.tallest + 2) problems.push('the Sort row is taller than its tallest control');
+if (sortRow.rightmost > sortRow.barRight + 1) problems.push('the page controls overflow the Sort row');
+if (sortRow.truncated) problems.push(`the sort label is being cut off: "${sortRow.label}"`);
+await bp.selectOption('.sortbar select', 'title');
+await bp.waitForTimeout(600);
+
+// Turning from the top control has to move the bottom one, and the count line.
+await bp.click('.sortbar .page-step[aria-label="Next page"]');
+await bp.waitForTimeout(800);
+console.log(
+  'after the top Next ->', await bp.locator('.page-of').textContent(),
+  '| bottom', await bp.locator('.pager:not(.compact)').getAttribute('data-page'),
+  '|', await bp.locator('.section-sub').first().textContent()
+);
+if ((await bp.locator('.page-of').textContent()) !== '2/3') {
+  problems.push('the top page readout did not advance');
+}
+if ((await bp.locator('.pager:not(.compact)').getAttribute('data-page')) !== '2') {
+  problems.push('the two pagers drifted out of step');
+}
+await bp.screenshot({ path: `${OUT}/34-lists-top-pager.png` });
+// Back to page 1 for the boundary checks below.
+await bp.click('.sortbar .page-step[aria-label="Previous page"]');
+await bp.waitForTimeout(800);
+
+await bp.click('.pager:not(.compact) .page-step[aria-label="Next page"]');
+await bp.waitForTimeout(800);
+const secondPage = await bulkNames();
+console.log('page 2 ->', secondPage.length, 'tiles, first:', secondPage[0]);
+// Sorting happens over the library and slicing after it, so page 2 continues
+// the alphabet rather than restarting it.
+if (secondPage[0] !== 'Synthetic 0050') {
+  problems.push(`page 2 did not continue the sort: starts at ${secondPage[0]}`);
+}
+if (secondPage.some((t) => firstPage.includes(t))) {
+  problems.push('a title appeared on two pages');
+}
+if ((await bp.evaluate(() => window.scrollY)) !== 0) {
+  problems.push('turning the page left the old scroll position');
+}
+
+// The last page is the remainder, and Next is spent.
+await bp.click('.pager:not(.compact) .page-step[aria-label="Next page"]');
+await bp.waitForTimeout(800);
+const lastPage = await bulkNames();
+console.log('page 3 ->', lastPage.length, 'tiles, last:', lastPage.at(-1));
+if (lastPage.length !== 20) problems.push(`last page rendered ${lastPage.length} tiles, expected 20`);
+if (!(await bp.locator('.pager:not(.compact) .page-step[aria-label="Next page"]').isDisabled())) {
+  problems.push('Next is still enabled on the last page');
+}
+
+// Filtering from page 3 must not strand you past the end of a shorter list.
+await bp.locator('.filter-row[data-group="rating"] .chip', { hasText: 'Liked' }).click();
+await bp.waitForTimeout(800);
+const filtered = await bulkNames();
+console.log('liked, from page 3 ->', filtered.length, 'tiles;', await bp.locator('.pager').count(), 'pager');
+if (!filtered.length) {
+  problems.push('narrowing the filter while on a later page left an empty grid');
+}
+if (await bp.locator('.pager').count()) {
+  problems.push('a single page of results still drew a pager');
+}
+
+// And the picker jumps straight to a page rather than stepping.
+await bp.locator('.chip.clear-filters').click();
+await bp.waitForTimeout(700);
+await bp.selectOption('.pager .page-pick', '3');
+await bp.waitForTimeout(800);
+console.log('jumped to ->', await bp.locator('.section-sub').first().textContent());
+if ((await bp.locator('.pager:not(.compact)').getAttribute('data-page')) !== '3') {
+  problems.push('the page picker did not jump to the chosen page');
+}
+await bp.screenshot({ path: `${OUT}/32-lists-last-page.png` });
+
+/* ---- 13. a genre keeps digging once you've dealt with page 1 ----
+ *
+ * The discover fixture serves one title a page, so marking off page 1 of each
+ * medium leaves the genre empty unless the view walks to page 2 and beyond.
+ * Before this change it fetched page 1 only and said "nothing new here" for
+ * good. Seeds storage, so it runs in the bulk context alongside the paging
+ * checks rather than in the main flow. */
+await bp.evaluate(() => {
+  // Page 1 of Drama: the first drama film and the first drama series.
+  localStorage.setItem(
+    'wl.data.v1',
+    JSON.stringify({
+      version: 2,
+      items: {
+        'movie:120467': { type: 'movie', id: 120467, title: 'The Grand Budapest Hotel', watched: true, seasons: {}, updatedAt: 1 },
+        'tv:1396': { type: 'tv', id: 1396, title: 'Breaking Bad', watched: true, seasons: {}, updatedAt: 2 },
+      },
+      settings: { defaultTitleLang: 'en', theme: 'auto', hideDisliked: true, region: 'US', myProviders: [] },
+    })
+  );
+});
+await bp.reload({ waitUntil: 'networkidle' });
+await bp.waitForTimeout(500);
+await bp.click('.tab[data-tab="genres"]');
+await bp.waitForTimeout(700);
+await bp.locator('.genre-tile', { hasText: 'Drama' }).first().click();
+await bp.waitForTimeout(2200);
+
+const deeper = await bp.locator('.grid .tile .t-name').allTextContents();
+console.log('drama with page 1 already seen ->', deeper.join(', '));
+if (!deeper.length) {
+  problems.push('a genre whose first page is all seen came back empty instead of fetching more');
+}
+for (const seen of ['The Grand Budapest Hotel', 'Breaking Bad']) {
+  if (deeper.includes(seen)) problems.push(`${seen} is already watched but was offered as a new pick`);
+}
+if (new Set(deeper).size !== deeper.length) {
+  problems.push(`the same title appeared twice across pages: ${deeper.join('|')}`);
+}
+await bp.screenshot({ path: `${OUT}/33-genre-deeper-pages.png` });
+
+// And once every page really is exhausted, it says so rather than spinning.
+await bp.evaluate(() => {
+  const data = JSON.parse(localStorage.getItem('wl.data.v1'));
+  for (const id of [496243, 120467]) {
+    data.items[`movie:${id}`] = { type: 'movie', id, title: String(id), watched: true, seasons: {}, updatedAt: 3 };
+  }
+  for (const id of [1396, 66732, 93405]) {
+    data.items[`tv:${id}`] = { type: 'tv', id, title: String(id), watched: true, seasons: {}, updatedAt: 3 };
+  }
+  localStorage.setItem('wl.data.v1', JSON.stringify(data));
+});
+await bp.reload({ waitUntil: 'networkidle' });
+await bp.waitForTimeout(500);
+await bp.click('.tab[data-tab="genres"]');
+await bp.waitForTimeout(700);
+await bp.locator('.genre-tile', { hasText: 'Drama' }).first().click();
+await bp.waitForTimeout(2400);
+const exhausted = await bp.locator('.empty p').textContent().catch(() => '');
+console.log('drama, everything seen ->', exhausted);
+if (!/page/i.test(exhausted)) {
+  problems.push(`an exhausted genre did not say how far it looked: "${exhausted}"`);
+}
+if (await bp.locator('.grid .tile').count()) {
+  problems.push('an exhausted genre still rendered tiles');
+}
 
 await browser.close();
 

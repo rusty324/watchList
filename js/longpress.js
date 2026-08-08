@@ -13,14 +13,17 @@
  */
 
 import { h, icon, toast } from './ui.js';
-import { getItem, setRating } from './store.js';
+import { getItem, setRating, setHidden } from './store.js';
 import { RATING_LABELS, snapshot } from './views/parts.js';
 import { resolveToTmdb } from './anilist.js';
 
 const HOLD_MS = 500;
 const MOVE_TOLERANCE = 10;
-const GAP = 10;
 const EDGE = 8;
+// How far the finger must travel after the options appear before a release
+// counts as a choice. Smaller than MOVE_TOLERANCE: by this point the press has
+// already been recognised, so this only has to rule out a stationary finger.
+const SLIDE_MIN = 6;
 
 const OPTIONS = ['up', 'once', 'down'];
 
@@ -38,23 +41,30 @@ export function movedTooFar(start, current, tolerance = MOVE_TOLERANCE) {
 }
 
 /**
- * Where to put the option row.
+ * Where to put the options, relative to the finger rather than the tile.
  *
- * Above the tile by preference — that's where the finger isn't. A tile near the
- * top of the viewport has no room there, so it flips below, and it clamps
- * horizontally so an edge-column tile can't push it off screen.
+ * Anchoring to the tile meant that on a tall poster the options could open most
+ * of a screen away from where you were actually pressing. Here the popover is
+ * centred on the press point, with the verdict row above it and Hide below, so
+ * every target is one short slide from where the finger already is.
+ *
+ * `anchorOffset` is the distance from the popover's top edge to the gap the
+ * fingertip sits in. Both axes clamp into the viewport, which can pull the gap
+ * off the fingertip near a screen edge — that is why a release without any
+ * movement commits nothing.
  */
-export function placePopover(tileRect, size, viewport, edge = EDGE, gap = GAP) {
-  const above = tileRect.top - gap - size.height;
-  const fitsAbove = above >= edge;
+export function placePopover(point, size, viewport, anchorOffset, edge = EDGE) {
+  const ideal = point.y - anchorOffset;
+  const maxY = viewport.height - size.height - edge;
+  const y = Math.max(edge, Math.min(ideal, maxY));
 
-  const y = fitsAbove
-    ? above
-    : Math.min(tileRect.bottom + gap, viewport.height - size.height - edge);
-  const centred = tileRect.left + tileRect.width / 2 - size.width / 2;
+  const centred = point.x - size.width / 2;
   const x = Math.max(edge, Math.min(centred, viewport.width - size.width - edge));
 
-  return { x, y, placement: fitsAbove ? 'above' : 'below' };
+  // Which way the popover had to move to fit, so the CSS can grow from the
+  // right corner.
+  const placement = y < ideal ? 'shifted-up' : y > ideal ? 'shifted-down' : 'centred';
+  return { x, y, placement };
 }
 
 /** Which option the point is over, or null. */
@@ -74,54 +84,68 @@ export function pickOption(point, optionRects) {
 
 /* ---------- popover ---------- */
 
+/**
+ * Three verdicts in a row, a gap the fingertip occupies, then Hide.
+ *
+ * Hide is on its own row rather than a fourth chip in the first: four across is
+ * already too wide for a 390px screen, and it isn't a verdict — it records no
+ * opinion, it just takes the title out of the grids.
+ */
 function ensurePopover() {
   if (popover) return popover;
+
+  const opt = (kind, label) =>
+    h(
+      'div',
+      { class: `rate-opt ${kind}`, dataset: { kind }, role: 'menuitem' },
+      icon(kind === 'hide' ? 'eye-off' : kind),
+      h('span', {}, label)
+    );
+
   popover = h(
     'div',
     { class: 'rate-pop', role: 'menu', 'aria-hidden': 'true' },
-    OPTIONS.map((kind) =>
-      h(
-        'div',
-        { class: `rate-opt ${kind}`, dataset: { kind }, role: 'menuitem' },
-        icon(kind),
-        h('span', {}, RATING_LABELS[kind].short)
-      )
-    )
+    h('div', { class: 'rate-row' }, OPTIONS.map((kind) => opt(kind, RATING_LABELS[kind].short))),
+    h('div', { class: 'rate-gap' }),
+    h('div', { class: 'rate-row' }, opt('hide', 'Hide'))
   );
   document.body.append(popover);
   return popover;
 }
 
+const optionEls = () => [...ensurePopover().querySelectorAll('.rate-opt')];
+
 function optionRects() {
-  return [...ensurePopover().children].map((el) => ({
-    kind: el.dataset.kind,
-    rect: el.getBoundingClientRect(),
-  }));
+  return optionEls().map((el) => ({ kind: el.dataset.kind, rect: el.getBoundingClientRect() }));
 }
 
 function highlight(kind) {
-  for (const el of ensurePopover().children) {
-    el.classList.toggle('on', el.dataset.kind === kind);
-  }
+  for (const el of optionEls()) el.classList.toggle('on', el.dataset.kind === kind);
 }
 
-function openPopover(tile, currentRating) {
+/** Distance from the popover's top edge to the middle of the finger gap. */
+function anchorOffset(pop) {
+  const gap = pop.querySelector('.rate-gap');
+  return gap.offsetTop + gap.offsetHeight / 2;
+}
+
+function openPopover(point, active) {
   const pop = ensurePopover();
   pop.classList.add('in');
   pop.setAttribute('aria-hidden', 'false');
 
-  for (const el of pop.children) {
+  for (const el of optionEls()) {
     // Show what's already set, so dragging onto it reads as "clear this".
-    el.classList.toggle('current', el.dataset.kind === currentRating);
+    el.classList.toggle('current', el.dataset.kind === active);
     el.classList.remove('on');
   }
 
   // Measure once visible, then position.
   const size = { width: pop.offsetWidth, height: pop.offsetHeight };
-  const spot = placePopover(tile.getBoundingClientRect(), size, {
+  const spot = placePopover(point, size, {
     width: window.innerWidth,
     height: window.innerHeight,
-  });
+  }, anchorOffset(pop));
   pop.style.transform = `translate(${Math.round(spot.x)}px, ${Math.round(spot.y)}px)`;
   pop.dataset.placement = spot.placement;
 }
@@ -130,7 +154,7 @@ function closePopover() {
   if (!popover) return;
   popover.classList.remove('in');
   popover.setAttribute('aria-hidden', 'true');
-  for (const el of popover.children) el.classList.remove('on', 'current');
+  for (const el of optionEls()) el.classList.remove('on', 'current');
 }
 
 /* ---------- committing ---------- */
@@ -140,7 +164,8 @@ async function commit(item, kind) {
   let meta = snapshot(item);
 
   if (item.source === 'anilist') {
-    // AniList tiles carry no TMDB id, and ratings are keyed on TMDB ids.
+    // AniList tiles carry no TMDB id, and both ratings and hides are keyed on
+    // TMDB ids.
     const match = await resolveToTmdb(item);
     if (!match) {
       toast(`No TMDB entry for “${item.title}” — open it to see why`);
@@ -152,6 +177,14 @@ async function commit(item, kind) {
     meta = { type: match.type, id: match.id, title: item.title, year: item.year };
   }
 
+  if (kind === 'hide') {
+    // Same "drag onto the active one to undo it" rule the verdicts follow.
+    const on = !getItem(target.type, target.id)?.hidden;
+    setHidden(target.type, target.id, on, meta);
+    toast(on ? `${item.title} — hidden` : `${item.title} — no longer hidden`);
+    return;
+  }
+
   // setRating already clears when the same verdict is set again, which is what
   // dragging onto the active option should do.
   const next = setRating(target.type, target.id, kind, meta);
@@ -160,9 +193,12 @@ async function commit(item, kind) {
 
 /* ---------- gesture ---------- */
 
-function currentRatingOf(item) {
+/** Which option to mark as already set, so dragging onto it reads as "undo". */
+function activeOptionOf(item) {
   if (item.source === 'anilist') return null; // unknown until resolved
-  return getItem(item.type, item.id)?.rating || null;
+  const stored = getItem(item.type, item.id);
+  if (stored?.hidden) return 'hide';
+  return stored?.rating || null;
 }
 
 /** Blocks page scroll once the popover is up. Must be non-passive to have effect. */
@@ -176,6 +212,11 @@ export function armRatingGesture(tile, item) {
 
     const start = { x: event.clientX, y: event.clientY };
     let open = false;
+    // The popover now opens around the finger rather than above the tile, so an
+    // option can end up under a stationary fingertip when the layout clamps at a
+    // screen edge. Requiring a deliberate slide is what stops that rating
+    // something nobody chose.
+    let slid = false;
     gestureInProgress = true;
 
     const timer = setTimeout(() => {
@@ -184,7 +225,7 @@ export function armRatingGesture(tile, item) {
       // Everything is passive by default, which would make preventDefault a
       // no-op — this is what stops the page scrolling under the popover.
       document.addEventListener('touchmove', blockScroll, { passive: false });
-      openPopover(tile, currentRatingOf(item));
+      openPopover(start, activeOptionOf(item));
       // Unsupported on iOS Safari; harmless where it's missing.
       navigator.vibrate?.(10);
     }, HOLD_MS);
@@ -198,11 +239,13 @@ export function armRatingGesture(tile, item) {
         if (movedTooFar(start, point)) finish(null);
         return;
       }
-      highlight(pickOption(point, optionRects()));
+      if (movedTooFar(start, point, SLIDE_MIN)) slid = true;
+      highlight(slid ? pickOption(point, optionRects()) : null);
     };
 
     const onUp = (upEvent) => {
-      finish(open ? pickOption({ x: upEvent.clientX, y: upEvent.clientY }, optionRects()) : null);
+      const point = { x: upEvent.clientX, y: upEvent.clientY };
+      finish(open && slid ? pickOption(point, optionRects()) : null);
     };
 
     // A cancel is the browser claiming the gesture for a scroll — expected, not

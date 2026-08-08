@@ -179,7 +179,10 @@ svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; 
 .filters { margin-bottom: 12px; }
 .filter-row { display: flex; align-items: center; gap: 9px; }
 .filter-row .f-label {
-  flex: 0 0 46px;
+  /* Wide enough for the longest label ("Rent/buy") at this size with room to
+   * spare; every row shares the width so the chip strips all start at the same
+   * x. A walkthrough check fails if a label ever gets close to its chips. */
+  flex: 0 0 62px;
   min-width: 0; /* or the label sizes to its own text and the rows misalign */
   font-size: 10.5px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
   color: var(--fg-faint);
@@ -189,11 +192,191 @@ svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; 
 .filter-row .chips { flex: 1; min-width: 0; margin-bottom: 5px; }
 .filter-row .chip { padding: 5px 11px; font-size: 12.5px; }
 .chip.clear-filters {
-  margin-left: 55px;
+  margin-left: 71px;
   background: transparent;
   color: var(--accent);
   padding-left: 0;
 }
+
+/* Seeding the platform index costs a request per title, so it gets a visible
+ * control with the count in it rather than happening silently on tab open. */
+.avail-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 0 4px 71px;
+  font-size: 11.5px;
+  color: var(--fg-faint);
+}
+.chip.avail-check {
+  background: transparent;
+  color: var(--accent);
+  padding: 6px 0; /* keeps a tappable height without widening the row */
+  font-size: 12px;
+}
+.chip.avail-check[disabled] { color: var(--fg-faint); }
+
+/* Page controls under the grid. A picker rather than a strip of numbers: a
+ * four-figure library runs to twenty-odd pages, more than fits across a phone. */
+.pager {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 20px 0 4px;
+}
+.pager .page-pick { flex: 1; min-width: 0; text-align: center; }
+.page-step {
+  flex: 0 0 auto;
+  width: 44px; height: 44px;      /* a full touch target, not just the glyph */
+  display: grid; place-items: center;
+  border-radius: var(--r-sm);
+  background: var(--bg-sunk);
+  color: var(--fg-dim);
+}
+.page-step svg { width: 20px; height: 20px; }
+.page-step[disabled] { opacity: 0.35; }
+
+/* The twin beside the Sort control. It shares a row with a select, so it drops
+ * the page picker for a plain position readout and shrinks its buttons — still
+ * past the 36px that reads as tappable, just not the full 44. */
+.pager-slot { flex: 0 0 auto; display: flex; }
+.sortbar .pager.compact { margin: 0; gap: 4px; }
+.pager.compact .page-step { width: 38px; height: 38px; }
+.pager.compact .page-step svg { width: 18px; height: 18px; }
+.page-of {
+  min-width: 42px;
+  text-align: center;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--fg-dim);
+  font-variant-numeric: tabular-nums; /* so the row doesn't jitter on 9 -> 10 */
+}
+
+/* Why a title you searched for isn't showing up anywhere else. */
+.hidden-note {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border-radius: var(--r-md);
+  background: var(--bg-sunk);
+  color: var(--fg-dim);
+  font-size: 13px;
+}
+.hidden-note svg { flex: 0 0 auto; width: 17px; height: 17px; }
+.hidden-note span { flex: 1; min-width: 0; }
+
+/* Hidden titles in Settings. Capped and scrollable: hiding is cheap, so this
+ * list can get long, and it should not push the rest of Settings off screen. */
+.hidden-list { max-height: 260px; overflow-y: auto; }
+.hidden-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--line);
+}
+.hidden-row .h-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 14px; font-weight: 600;
+}
+.hidden-row .h-year { flex: 0 0 auto; color: var(--fg-faint); font-size: 12.5px; }
+.hidden-row .chip { padding: 5px 11px; font-size: 12.5px; }
+
+/* ---------- playlists ---------- */
+
+.pl-index { display: flex; flex-direction: column; gap: 10px; }
+.pl-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: var(--r-md);
+  background: var(--bg-elev);
+}
+.pl-thumbs { flex: 0 0 auto; display: flex; }
+/* Overlapped covers, so four fit in the width of about two. The ring is the
+ * card's own colour, which is what separates one cover from the next — without
+ * it a stack of artwork-less placeholders reads as a single grey block. */
+.pl-thumbs .poster {
+  flex: 0 0 34px;
+  width: 34px; height: 51px;
+  border-radius: 4px;
+  margin-right: -14px;
+  box-shadow: 0 0 0 2px var(--bg-elev);
+}
+.pl-thumbs .poster:last-child { margin-right: 0; }
+.pl-thumbs .poster .ph { font-size: 0; }  /* too small for a legible name */
+.pl-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.pl-name {
+  font-size: 15px; font-weight: 700;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.pl-count { font-size: 12.5px; color: var(--fg-faint); font-weight: 600; }
+.pl-arrow { flex: 0 0 auto; width: 18px; height: 18px; color: var(--fg-faint); }
+
+.pl-rows { display: flex; flex-direction: column; gap: 8px; }
+.pl-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px 6px 2px;
+  border-radius: var(--r-md);
+  background: var(--bg-elev);
+  /* Rows slide out of the way as one is dragged past them. */
+  transition: transform 0.16s var(--ease);
+}
+/* Killed mid-drag: the row under the finger must track it exactly, and the
+ * others should not animate while the whole list is re-measuring. */
+.pl-rows.reordering .pl-row { transition: none; }
+.pl-row.dragging {
+  position: relative;
+  z-index: 2;
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.36);
+  scale: 1.02;
+}
+.drag-handle {
+  flex: 0 0 34px;
+  height: 44px;                    /* a real target, not just the glyph */
+  display: grid; place-items: center;
+  color: var(--fg-faint);
+  cursor: grab;
+  touch-action: none;              /* or the browser claims the drag for a scroll */
+}
+.drag-handle svg { width: 18px; height: 18px; }
+.pl-row.dragging .drag-handle { cursor: grabbing; }
+
+.pl-open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+}
+.pl-open .poster { flex: 0 0 38px; width: 38px; height: 57px; border-radius: 5px; }
+.pl-open .poster .ph { font-size: 8.5px; padding: 4%; }
+.pl-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.pl-title {
+  font-size: 14px; font-weight: 650;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.pl-sub { font-size: 12px; color: var(--fg-faint); }
+.pl-tick { flex: 0 0 auto; color: var(--up); }
+.pl-tick svg { width: 16px; height: 16px; stroke-width: 3; }
+
+.pl-controls { flex: 0 0 auto; display: flex; }
+.pl-btn {
+  width: 32px; height: 40px;
+  display: grid; place-items: center;
+  color: var(--fg-dim);
+}
+.pl-btn svg { width: 17px; height: 17px; }
+.pl-btn[disabled] { opacity: 0.28; }
+.pl-btn.remove { color: var(--fg-faint); }
 
 .sortbar { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
 .sortbar label { font-size: 13px; color: var(--fg-dim); font-weight: 600; }
@@ -314,15 +497,19 @@ svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; 
 
 /* Must be positioned everywhere it appears: the .ph fallback inside is
  * absolutely positioned and would otherwise escape to the nearest ancestor. */
-.poster { position: relative; }
-
-.tile .poster {
-  aspect-ratio: 2 / 3;
+/* Shared by every use of posterBox() — tiles, detail heroes, playlist rows.
+ * These lived under `.tile .poster` and were duplicated under `.hero .poster`,
+ * which meant the first use outside either (a playlist row) drew an unclipped
+ * placeholder spilling over its neighbour. Context now only sets the size. */
+.poster {
+  position: relative;
   border-radius: var(--r-md);
   overflow: hidden;
   background: var(--bg-sunk);
 }
-.tile .poster img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.poster img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+.tile .poster { aspect-ratio: 2 / 3; }
 
 /* Artwork fallback, used by tiles, detail heroes and circular avatars alike. */
 .poster .ph {
@@ -444,14 +631,7 @@ svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; 
 /* ---------- detail content ---------- */
 
 .hero { display: flex; gap: 14px; margin-bottom: 16px; }
-.hero .poster {
-  flex: 0 0 116px;
-  aspect-ratio: 2 / 3;
-  border-radius: var(--r-md);
-  overflow: hidden;
-  background: var(--bg-sunk);
-}
-.hero .poster img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.hero .poster { flex: 0 0 116px; aspect-ratio: 2 / 3; }
 .hero .info { flex: 1; min-width: 0; }
 .hero h1 { margin: 0; font-size: 21px; font-weight: 800; letter-spacing: -0.02em; line-height: 1.2; }
 .hero .alt-title { margin: 4px 0 0; font-size: 14px; color: var(--fg-dim); }
@@ -538,6 +718,10 @@ svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; 
   font-size: 15px; font-weight: 600;
   text-align: left;
 }
+/* An icon used directly in an action, rather than inside the .box a checkbox
+ * uses. Without this an inline SVG has no intrinsic size and fills the row. */
+.action > svg { flex: 0 0 20px; width: 20px; height: 20px; color: var(--fg-dim); }
+.action[aria-pressed="true"] > svg { color: var(--accent); }
 .action .box {
   flex: 0 0 22px; height: 22px;
   border: 2px solid var(--fg-faint);
@@ -805,6 +989,24 @@ svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; 
   top: 0;
   left: 0;
   z-index: 45;
+  /* Verdicts, a gap the fingertip occupies, then Hide. The popover is
+   * positioned so the middle of that gap lands on the press point. */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  opacity: 0;
+  visibility: hidden;
+  transform-origin: center center;
+  scale: 0.86;
+  transition: opacity 0.14s ease, scale 0.16s var(--ease), visibility 0.16s;
+  pointer-events: none; /* the finger is captured; never intercept taps */
+}
+.rate-pop.in { opacity: 1; visibility: visible; scale: 1; }
+/* Grow from the edge the popover was pushed away from. */
+.rate-pop[data-placement='shifted-up'] { transform-origin: center bottom; }
+.rate-pop[data-placement='shifted-down'] { transform-origin: center top; }
+
+.rate-row {
   display: flex;
   gap: 6px;
   padding: 6px;
@@ -813,15 +1015,9 @@ svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; 
   backdrop-filter: saturate(180%) blur(20px);
   -webkit-backdrop-filter: saturate(180%) blur(20px);
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.34), inset 0 0 0 1px var(--line);
-  opacity: 0;
-  visibility: hidden;
-  transform-origin: center bottom;
-  scale: 0.86;
-  transition: opacity 0.14s ease, scale 0.16s var(--ease), visibility 0.16s;
-  pointer-events: none; /* the finger is captured; never intercept taps */
 }
-.rate-pop.in { opacity: 1; visibility: visible; scale: 1; }
-.rate-pop[data-placement='below'] { transform-origin: center top; }
+/* Clear of the fingertip in both directions, so neither row sits under it. */
+.rate-gap { height: 54px; flex: 0 0 auto; }
 
 .rate-opt {
   min-width: 72px;
@@ -850,6 +1046,11 @@ svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; 
 .rate-opt.on.up { background: var(--up); }
 .rate-opt.on.once { background: var(--once); }
 .rate-opt.on.down { background: var(--down); }
+.rate-opt.on.hide { background: var(--fg-dim); }
+
+/* Hide records no opinion, so it is deliberately the quietest target here —
+ * it should not read as a fourth verdict. */
+.rate-opt.hide { min-width: 96px; min-height: 48px; color: var(--fg-faint); }
 
 @media (prefers-reduced-motion: reduce) {
   .rate-pop, .rate-opt, .tile.pressing .poster { transition: none; scale: 1; }

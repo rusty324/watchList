@@ -58,9 +58,13 @@ const genres = await import('../js/genres.js');
 const anilist = await import('../js/anilist.js');
 const diag = await import('../js/diagnostics.js');
 const lp = await import('../js/longpress.js');
+const providers = await import('../js/providers.js');
+const reorder = await import('../js/reorder.js');
 
 function resetStore() {
   for (const key of Object.keys(store.state.items)) delete store.state.items[key];
+  // Playlists too, or they accumulate across tests and counts drift.
+  for (const key of Object.keys(store.state.playlists)) delete store.state.playlists[key];
   store.state.settings.defaultTitleLang = 'en';
 }
 
@@ -351,6 +355,370 @@ test('the genre group filters on any of the selected genres', () => {
   assert.deepEqual(pick(['Adventure']), ['The Princess Bride']);
   assert.deepEqual(pick(['Adventure', 'Drama']).sort(), ['Breaking Bad', 'The Princess Bride']);
   assert.deepEqual(pick(['Nonexistent']), []);
+});
+
+/* ---------- platform filters ---------- */
+
+/** As tmdb.normalizeProviders would hand them over. */
+const NETFLIX = { id: 8, name: 'Netflix' };
+const TUBI = { id: 73, name: 'Tubi TV' };
+const APPLE = { id: 2, name: 'Apple TV' };
+const GOOGLE = { id: 3, name: 'Google Play Movies' };
+
+test('availability collapses into the two buckets a filter can use', () => {
+  const entry = providers.compact({
+    region: 'US',
+    stream: [NETFLIX],
+    // Free and ad-supported are the same proposition as a subscription to
+    // someone picking something to watch, and Tubi can appear in both.
+    free: [TUBI, NETFLIX],
+    rent: [APPLE],
+    buy: [APPLE, GOOGLE],
+  });
+  assert.deepEqual(entry.stream.map((p) => p.name), ['Netflix', 'Tubi TV']);
+  assert.deepEqual(entry.buy.map((p) => p.name), ['Apple TV', 'Google Play Movies']);
+  // Ids are strings so they can key a filter Set and a chip's dataset alike.
+  assert.deepEqual(entry.stream.map((p) => p.id), ['8', '73']);
+});
+
+test('a title available nowhere still gets a well-formed entry', () => {
+  const entry = providers.compact({ region: 'US', stream: [], free: [], rent: [], buy: [] });
+  assert.deepEqual(entry.stream, []);
+  assert.deepEqual(entry.buy, []);
+});
+
+const AVAIL = new Map([
+  ['movie:1', providers.compact({ stream: [NETFLIX], rent: [APPLE] })],
+  ['movie:2', providers.compact({ stream: [TUBI] })],
+  ['tv:4', providers.compact({ stream: [NETFLIX], buy: [GOOGLE] })],
+  // Alien (movie:3) is deliberately absent: nobody has looked it up.
+]);
+
+test('platform options come from the library, most common first', () => {
+  const items = sortMod.trackedItems(LIST);
+  assert.deepEqual(
+    providers.platformOptions(items, 'stream', AVAIL).map((p) => `${p.name}:${p.count}`),
+    ['Netflix:2', 'Tubi TV:1']
+  );
+  assert.deepEqual(
+    providers.platformOptions(items, 'buy', AVAIL).map((p) => p.name),
+    ['Apple TV', 'Google Play Movies']
+  );
+  assert.deepEqual(providers.platformOptions(items, 'stream', new Map()), []);
+});
+
+test('platform filters widen within a group and narrow across groups', () => {
+  const pick = (groups) =>
+    titlesOf(sortMod.applyList(LIST, { filters: filters(groups), availability: AVAIL }));
+
+  assert.deepEqual(pick({ stream: ['8'] }).sort(), ['Breaking Bad', 'The Princess Bride']);
+  // Two services in the same group means either, not both.
+  assert.deepEqual(pick({ stream: ['8', '73'] }).sort(), [
+    'Breaking Bad',
+    'Parasite',
+    'The Princess Bride',
+  ]);
+  // Across groups it still narrows: on Netflix AND rentable from Apple.
+  assert.deepEqual(pick({ stream: ['8'], buy: ['2'] }), ['The Princess Bride']);
+  // And it composes with the ordinary groups.
+  assert.deepEqual(pick({ stream: ['8'], type: ['tv'] }), ['Breaking Bad']);
+});
+
+test('a title nobody has checked matches no platform', () => {
+  const pick = (groups) =>
+    titlesOf(sortMod.applyList(LIST, { filters: filters(groups), availability: AVAIL }));
+  // Alien is in the list and unrated for availability. "Not known to be on
+  // Netflix" must not read as "on Netflix".
+  assert.ok(!pick({ stream: ['8'] }).includes('Alien'));
+  assert.deepEqual(pick({ stream: ['999'] }), []);
+  // With no index at all, a platform filter empties the list rather than
+  // silently ignoring itself.
+  assert.deepEqual(titlesOf(sortMod.applyList(LIST, { filters: filters({ stream: ['8'] }) })), []);
+});
+
+test('an unselected platform group leaves the list alone', () => {
+  assert.equal(sortMod.applyList(LIST, { filters: filters({}), availability: AVAIL }).length, 4);
+  assert.equal(sortMod.applyList(LIST, { availability: new Map() }).length, 4);
+});
+
+test('a check is needed for missing entries and for stale ones', () => {
+  const items = sortMod.trackedItems(LIST);
+  const now = Date.now();
+  assert.deepEqual(providers.needsCheck(items, AVAIL, now).map((i) => i.title), ['Alien']);
+  assert.equal(providers.checkedCount(items, AVAIL), 3);
+
+  // Availability moves as licences do, so an old answer is worth redoing.
+  const eightDays = now + 8 * 24 * 60 * 60 * 1000;
+  assert.equal(providers.needsCheck(items, AVAIL, eightDays).length, 4);
+  assert.equal(providers.needsCheck(items, new Map(), now).length, 4);
+});
+
+/* ---------- hidden titles ---------- */
+
+const WITH_HIDDEN = {
+  ...LIST,
+  // Hidden and otherwise untouched — the ordinary case, since hiding is for
+  // titles you have no opinion about.
+  'movie:6': { type: 'movie', id: 6, title: 'Dismissed', year: 2011, hidden: true, genres: ['Drama'], scores: {} },
+  // Hidden *and* rated down, which is where the two rules could collide.
+  'movie:7': { type: 'movie', id: 7, title: 'Dismissed And Disliked', year: 2012, rating: 'down', hidden: true, genres: ['Horror'], scores: {} },
+};
+
+test('hiding is a separate rule from the hide-disliked preference', () => {
+  // isHidden must not consult settings, or the Settings toggle would sweep
+  // hand-hidden titles back into view.
+  assert.equal(sortMod.isHidden({ hidden: true }), true);
+  assert.equal(sortMod.isHidden({ rating: 'down' }), false);
+  assert.equal(sortMod.isHidden({}), false);
+  assert.equal(sortMod.isHidden(null), false);
+
+  // suppressed() is the union, and is what the browsing grids use.
+  const settings = { hideDisliked: true };
+  assert.equal(sortMod.suppressed({ hidden: true }, settings), true);
+  assert.equal(sortMod.suppressed({ rating: 'down' }, settings), true);
+  // Turning the preference off releases a merely-disliked title...
+  assert.equal(sortMod.suppressed({ rating: 'down' }, { hideDisliked: false }), false);
+  // ...but never one that was hidden by hand.
+  assert.equal(sortMod.suppressed({ hidden: true }, { hideDisliked: false }), true);
+});
+
+test('hidden titles leave the Lists tab, and the "Not for me" chip cannot recall them', () => {
+  const shown = titlesOf(sortMod.applyList(WITH_HIDDEN, { settings: { hideDisliked: true } }));
+  assert.ok(!shown.includes('Dismissed'));
+  assert.ok(!shown.includes('Dismissed And Disliked'));
+
+  // The disliked escape hatch reveals Alien, which is only rated down — but not
+  // the one that was also hidden by hand. A hide outranks the chip.
+  const escaped = titlesOf(
+    sortMod.applyList(WITH_HIDDEN, {
+      filters: filters({ rating: ['disliked'] }),
+      settings: { hideDisliked: true },
+    })
+  );
+  assert.ok(escaped.includes('Alien'));
+  assert.ok(!escaped.includes('Dismissed And Disliked'));
+
+  // Turning the preference off doesn't un-hide either.
+  const withSettingOff = titlesOf(sortMod.applyList(WITH_HIDDEN, { settings: { hideDisliked: false } }));
+  assert.ok(!withSettingOff.includes('Dismissed'));
+});
+
+test('a hidden title is never offered as a recommendation', () => {
+  const exclude = rec.excludeSet(WITH_HIDDEN);
+  assert.ok(exclude.has('movie:6'));
+});
+
+test('hiding alone keeps a record alive through a prune', () => {
+  resetStore();
+  // Nothing but the hide: if isTracked ignored it, pruning would drop the
+  // record and the title would quietly come back.
+  store.setHidden('movie', 4242, true, { type: 'movie', id: 4242, title: 'Dismissed' });
+  assert.equal(store.getItem('movie', 4242).hidden, true);
+  assert.equal(store.pruneUntracked(), 0);
+  assert.equal(store.getItem('movie', 4242).hidden, true);
+
+  assert.deepEqual(store.hiddenItems().map((i) => i.id), [4242]);
+
+  // Un-hiding leaves an empty shell, which unhideAll cleans up for us.
+  assert.equal(store.unhideAll(), 1);
+  assert.equal(store.getItem('movie', 4242), null);
+  assert.deepEqual(store.hiddenItems(), []);
+});
+
+test('un-hiding keeps a title that has other state attached', () => {
+  resetStore();
+  store.setRating('movie', 550, 'up', { type: 'movie', id: 550, title: 'Fight Club' });
+  store.setHidden('movie', 550, true);
+  assert.equal(store.unhideAll(), 1);
+  // The rating outlives the hide — only records holding nothing else get pruned.
+  assert.equal(store.getItem('movie', 550).rating, 'up');
+  assert.equal(store.getItem('movie', 550).hidden, false);
+});
+
+/* ---------- playlists ---------- */
+
+test('moveItem shifts one entry and leaves the rest in order', () => {
+  const list = ['a', 'b', 'c', 'd'];
+  assert.deepEqual(reorder.moveItem(list, 3, 0), ['d', 'a', 'b', 'c']);
+  assert.deepEqual(reorder.moveItem(list, 0, 3), ['b', 'c', 'd', 'a']);
+  assert.deepEqual(reorder.moveItem(list, 1, 2), ['a', 'c', 'b', 'd']);
+  // Moving something to where it already is changes nothing.
+  assert.deepEqual(reorder.moveItem(list, 2, 2), list);
+  // The original is never touched.
+  assert.deepEqual(list, ['a', 'b', 'c', 'd']);
+});
+
+test('moveItem survives the indices the end-of-list buttons produce', () => {
+  const list = ['a', 'b', 'c'];
+  // "Move up" on the first row and "move down" on the last are disabled in the
+  // UI, but the arithmetic must not corrupt the list if one ever gets through.
+  assert.deepEqual(reorder.moveItem(list, 0, -1), ['a', 'b', 'c']);
+  assert.deepEqual(reorder.moveItem(list, 2, 3), ['a', 'b', 'c']);
+  assert.deepEqual(reorder.moveItem(list, 9, 0), ['a', 'b', 'c']);
+  assert.deepEqual(reorder.moveItem(list, -1, 0), ['a', 'b', 'c']);
+
+  // Whatever happens, nothing is lost or duplicated.
+  for (const [from, to] of [[0, 2], [2, 0], [1, 1], [0, 99], [-3, 1]]) {
+    const out = reorder.moveItem(list, from, to);
+    assert.equal(out.length, list.length);
+    assert.deepEqual([...out].sort(), ['a', 'b', 'c']);
+  }
+});
+
+test('dropIndex picks the slot by row midpoints', () => {
+  // Three 50px rows starting at y=100.
+  const rects = [
+    { top: 100, height: 50 },
+    { top: 150, height: 50 },
+    { top: 200, height: 50 },
+  ];
+  assert.equal(reorder.dropIndex(0, rects), 0); // above everything
+  assert.equal(reorder.dropIndex(120, rects), 0);
+  // Past the midpoint of row 0, so row 1's slot — swapping at halfway is what
+  // keeps a drag from feeling stuck.
+  assert.equal(reorder.dropIndex(130, rects), 1);
+  assert.equal(reorder.dropIndex(230, rects), 2);
+  assert.equal(reorder.dropIndex(9999, rects), 2); // below everything
+  assert.equal(reorder.dropIndex(50, []), 0);
+});
+
+test('a playlist holds an order, and adding the same title twice is a no-op', () => {
+  resetStore();
+  const pl = store.createPlaylist('Movie night');
+  assert.equal(pl.name, 'Movie night');
+  assert.deepEqual(pl.items, []);
+
+  store.addToPlaylist(pl.id, 'movie:1', { type: 'movie', id: 1, title: 'One' });
+  store.addToPlaylist(pl.id, 'tv:2', { type: 'tv', id: 2, title: 'Two' });
+  store.addToPlaylist(pl.id, 'movie:1');
+  assert.deepEqual(store.getPlaylist(pl.id).items, ['movie:1', 'tv:2']);
+
+  // The metadata comes along so a row has something to draw for a title that
+  // carries no rating or watch mark of its own.
+  assert.equal(store.getItem('movie', 1).title, 'One');
+
+  store.setPlaylistOrder(pl.id, ['tv:2', 'movie:1']);
+  assert.deepEqual(store.getPlaylist(pl.id).items, ['tv:2', 'movie:1']);
+
+  store.removeFromPlaylist(pl.id, 'tv:2');
+  assert.deepEqual(store.getPlaylist(pl.id).items, ['movie:1']);
+});
+
+test('a title held only by a playlist survives a prune', () => {
+  resetStore();
+  const pl = store.createPlaylist('Keep me');
+  store.addToPlaylist(pl.id, 'movie:7', { type: 'movie', id: 7, title: 'Held' });
+  // Nothing rated, nothing watched — isTracked alone would drop it, and the row
+  // would then render with no title and no poster.
+  assert.equal(store.isTracked(store.getItem('movie', 7)), false);
+  assert.equal(store.pruneUntracked(), 0);
+  assert.equal(store.getItem('movie', 7).title, 'Held');
+
+  // Once it leaves the playlist nothing is holding it, and it goes.
+  store.removeFromPlaylist(pl.id, 'movie:7');
+  assert.equal(store.pruneUntracked(), 1);
+  assert.equal(store.getItem('movie', 7), null);
+});
+
+test('deleting a playlist leaves a tombstone rather than a hole', () => {
+  resetStore();
+  const pl = store.createPlaylist('Temporary');
+  store.addToPlaylist(pl.id, 'movie:1', { type: 'movie', id: 1, title: 'One' });
+  assert.equal(store.livePlaylists().length, 1);
+
+  store.deletePlaylist(pl.id);
+  assert.equal(store.livePlaylists().length, 0);
+  assert.equal(store.getPlaylist(pl.id), null);
+  // The record stays, carrying the delete, so a merge can see it happened.
+  assert.ok(store.state.playlists[pl.id].deletedAt);
+});
+
+test('playlistsContaining finds every list a title is in', () => {
+  resetStore();
+  const a = store.createPlaylist('A');
+  const b = store.createPlaylist('B');
+  store.addToPlaylist(a.id, 'movie:1', { type: 'movie', id: 1, title: 'One' });
+  store.addToPlaylist(b.id, 'movie:1');
+  assert.deepEqual(store.playlistsContaining('movie:1').map((p) => p.name).sort(), ['A', 'B']);
+  assert.deepEqual(store.playlistsContaining('movie:404'), []);
+});
+
+test('restoring a backup carries playlists, and does not merge them in', () => {
+  resetStore();
+  const pl = store.createPlaylist('Before');
+  store.addToPlaylist(pl.id, 'movie:1', { type: 'movie', id: 1, title: 'One' });
+
+  const exported = JSON.parse(store.exportData());
+  assert.equal(Object.keys(exported.playlists).length, 1);
+
+  store.replaceData({ items: {}, playlists: {}, settings: store.state.settings });
+  assert.deepEqual(store.livePlaylists(), []);
+
+  // ...and back again.
+  store.replaceData(exported);
+  assert.deepEqual(store.livePlaylists().map((p) => p.name), ['Before']);
+});
+
+/* ---------- paging ---------- */
+
+const many = (n) => Array.from({ length: n }, (_, i) => ({ id: i + 1 }));
+const ids = (list) => list.map((i) => i.id);
+
+test('pages are 50 long and count up from one', () => {
+  assert.equal(sortMod.PAGE_SIZE, 50);
+  assert.equal(sortMod.pageCount(1000), 20);
+  assert.equal(sortMod.pageCount(1001), 21); // a remainder gets its own page
+  assert.equal(sortMod.pageCount(50), 1);
+  // An empty list is still "page 1 of 1", never "page 1 of 0".
+  assert.equal(sortMod.pageCount(0), 1);
+});
+
+test('a page slice covers the list exactly once, in order', () => {
+  const list = many(120);
+  assert.deepEqual(ids(sortMod.pageSlice(list, 1)).slice(0, 2), [1, 2]);
+  assert.equal(sortMod.pageSlice(list, 1).length, 50);
+  assert.deepEqual(ids(sortMod.pageSlice(list, 2))[0], 51);
+  // The last page is the remainder, not a full page padded out.
+  assert.equal(sortMod.pageSlice(list, 3).length, 20);
+  assert.deepEqual(ids(sortMod.pageSlice(list, 3)).at(-1), 120);
+
+  const seen = new Set();
+  for (let p = 1; p <= sortMod.pageCount(list.length); p++) {
+    for (const item of sortMod.pageSlice(list, p)) {
+      assert.ok(!seen.has(item.id), `id ${item.id} appeared on two pages`);
+      seen.add(item.id);
+    }
+  }
+  assert.equal(seen.size, 120);
+});
+
+test('a page out of range clamps instead of showing nothing', () => {
+  const list = many(120);
+  // Narrowing a filter while on page 3 must not leave you staring at a blank
+  // grid — the last real page is what you get.
+  assert.equal(sortMod.clampPage(9, 120), 3);
+  assert.equal(sortMod.clampPage(0, 120), 1);
+  assert.equal(sortMod.clampPage(-4, 120), 1);
+  assert.equal(sortMod.clampPage(2.7, 120), 2);
+  assert.equal(sortMod.clampPage(undefined, 120), 1);
+  assert.equal(sortMod.clampPage(3, 0), 1);
+  assert.equal(sortMod.pageSlice(list, 99).length, 20);
+});
+
+test('the page range reads as an inclusive 1-based span', () => {
+  assert.deepEqual(sortMod.pageRange(1, 660), { from: 1, to: 50 });
+  assert.deepEqual(sortMod.pageRange(2, 660), { from: 51, to: 100 });
+  // The last page stops at the total, not at a round 50.
+  assert.deepEqual(sortMod.pageRange(14, 660), { from: 651, to: 660 });
+  assert.deepEqual(sortMod.pageRange(1, 0), { from: 0, to: 0 });
+});
+
+test('paging composes with filtering and sorting, not around them', () => {
+  // Sorting happens over the whole library and slicing after it, so page 1 of
+  // "Title A–Z" is the alphabetical start rather than the first 50 stored.
+  const sorted = sortMod.applyList(LIST, { sort: 'title' });
+  assert.deepEqual(titlesOf(sortMod.pageSlice(sorted, 1)), titlesOf(sorted));
+  assert.equal(sortMod.pageCount(sorted.length), 1);
 });
 
 test('the list filter box matches original titles too', () => {
@@ -834,6 +1202,68 @@ test('background score fetches survive losing an edit race', () => {
   assert.equal(merged.items['movie:1'].scores.imdb, 8.5);
 });
 
+test('playlists survive a sync rather than being dropped', () => {
+  // mergeData builds a fresh object, so anything it doesn't name explicitly is
+  // lost on every pull. This is the guard for that.
+  const merged = sync.mergeData(
+    { items: {}, playlists: { a: { id: 'a', name: 'Mine', items: ['movie:1'], updatedAt: 10 } } },
+    { items: {}, playlists: { b: { id: 'b', name: 'Theirs', items: ['tv:2'], updatedAt: 20 } } }
+  );
+  assert.deepEqual(Object.keys(merged.playlists).sort(), ['a', 'b']);
+});
+
+test('the newer edit takes the whole playlist', () => {
+  // An ordered array reordered on two devices has no sensible element-wise
+  // merge, so the unit is the whole playlist.
+  const local = { id: 'a', name: 'A', items: ['x', 'y', 'z'], updatedAt: 200 };
+  const remote = { id: 'a', name: 'A', items: ['z', 'y', 'x'], updatedAt: 100 };
+
+  assert.deepEqual(
+    sync.mergeData({ items: {}, playlists: { a: local } }, { items: {}, playlists: { a: remote } })
+      .playlists.a.items,
+    ['x', 'y', 'z']
+  );
+  // ...and the other way round, so it really is the timestamp deciding.
+  assert.deepEqual(
+    sync.mergeData(
+      { items: {}, playlists: { a: { ...local, updatedAt: 50 } } },
+      { items: {}, playlists: { a: remote } }
+    ).playlists.a.items,
+    ['z', 'y', 'x']
+  );
+});
+
+test('a deleted playlist does not come back from the other device', () => {
+  // The whole reason deletion is a tombstone: the remote still holds its copy,
+  // and without a record of the delete the merge would treat it as news.
+  const deleted = { id: 'a', name: 'Gone', items: [], updatedAt: 300, deletedAt: 300 };
+  const stale = { id: 'a', name: 'Gone', items: ['movie:1'], updatedAt: 100 };
+
+  const merged = sync.mergeData(
+    { items: {}, playlists: { a: deleted } },
+    { items: {}, playlists: { a: stale } }
+  );
+  assert.ok(merged.playlists.a.deletedAt, 'the delete was undone by a stale copy');
+
+  // And a delete arriving from the remote wins over an older local copy too.
+  const other = sync.mergeData(
+    { items: {}, playlists: { a: stale } },
+    { items: {}, playlists: { a: deleted } }
+  );
+  assert.ok(other.playlists.a.deletedAt);
+});
+
+test('a playlist edit counts as recent activity for the settings tiebreak', () => {
+  // newestEdit decides which side's settings win. Before playlists it only
+  // looked at items, so a device that had only touched playlists would look
+  // untouched and lose its settings.
+  const merged = sync.mergeData(
+    { items: {}, playlists: { a: { id: 'a', items: [], updatedAt: 900 } }, settings: { region: 'GB' } },
+    { items: { 'movie:1': { updatedAt: 100 } }, settings: { region: 'US' } }
+  );
+  assert.equal(merged.settings.region, 'GB');
+});
+
 /* ---------- omdb parsing ---------- */
 
 test('IMDb and Rotten Tomatoes are pulled out of an OMDb payload', () => {
@@ -860,45 +1290,47 @@ test('missing scores parse to null rather than a fake number', () => {
 /* ---------- press-and-hold rating ---------- */
 
 const VIEWPORT = { width: 390, height: 844 };
-const POP = { width: 240, height: 68 };
+// Verdict row, the gap the fingertip sits in, then Hide.
+const POP = { width: 240, height: 180 };
+const ANCHOR = 95; // top of the popover to the middle of the gap
 
-test('the rating options sit above the poster when there is room', () => {
-  const tile = { top: 400, bottom: 640, left: 100, right: 280, width: 180 };
-  const spot = lp.placePopover(tile, POP, VIEWPORT);
-  assert.equal(spot.placement, 'above');
-  assert.equal(spot.y, 400 - 10 - POP.height);
-  // Centred on the tile.
-  assert.equal(spot.x, 100 + 90 - POP.width / 2);
+test('the options open around the finger, not around the tile', () => {
+  const spot = lp.placePopover({ x: 195, y: 500 }, POP, VIEWPORT, ANCHOR);
+  assert.equal(spot.placement, 'centred');
+  // The gap lands exactly on the press point, so the verdict row is just above
+  // the fingertip and Hide just below it.
+  assert.equal(spot.y + ANCHOR, 500);
+  assert.equal(spot.x + POP.width / 2, 195);
 });
 
-test('they flip below a poster too near the top to fit above', () => {
-  const tile = { top: 20, bottom: 260, left: 100, right: 280, width: 180 };
-  const spot = lp.placePopover(tile, POP, VIEWPORT);
-  assert.equal(spot.placement, 'below');
-  assert.equal(spot.y, 270);
+test('a press near the top of the screen pushes the options down', () => {
+  const spot = lp.placePopover({ x: 195, y: 40 }, POP, VIEWPORT, ANCHOR);
+  assert.equal(spot.y, 8);
+  assert.equal(spot.placement, 'shifted-down');
+  // Clamping moved the gap off the fingertip, which is exactly the case the
+  // "must slide before it counts" rule exists for.
+  assert.ok(spot.y + ANCHOR > 40);
 });
 
-test('they stay on screen for tiles in the edge columns', () => {
-  // Left column: centring would put x negative.
-  const left = lp.placePopover(
-    { top: 400, bottom: 640, left: 0, right: 180, width: 180 }, POP, VIEWPORT
-  );
+test('a press near the bottom pushes them up, still on screen', () => {
+  const spot = lp.placePopover({ x: 195, y: 830 }, POP, VIEWPORT, ANCHOR);
+  assert.equal(spot.placement, 'shifted-up');
+  assert.ok(spot.y + POP.height <= VIEWPORT.height - 8);
+});
+
+test('a press near a side edge keeps the options on screen', () => {
+  const left = lp.placePopover({ x: 12, y: 500 }, POP, VIEWPORT, ANCHOR);
   assert.equal(left.x, 8);
 
-  // Right column: centring would run off the right edge.
-  const right = lp.placePopover(
-    { top: 400, bottom: 640, left: 210, right: 390, width: 180 }, POP, VIEWPORT
-  );
+  const right = lp.placePopover({ x: 380, y: 500 }, POP, VIEWPORT, ANCHOR);
   assert.equal(right.x, VIEWPORT.width - POP.width - 8);
 });
 
-test('a very tall popover is still pinned inside the viewport', () => {
-  const spot = lp.placePopover(
-    { top: 10, bottom: 800, left: 100, right: 280, width: 180 },
-    { width: 240, height: 200 },
-    VIEWPORT
-  );
-  assert.ok(spot.y + 200 <= VIEWPORT.height, `bottom ${spot.y + 200} exceeds viewport`);
+test('a popover taller than the screen is still pinned inside it', () => {
+  const tall = { width: 240, height: 900 };
+  const spot = lp.placePopover({ x: 195, y: 400 }, tall, VIEWPORT, ANCHOR);
+  // Nothing fits, but the top edge is what has to stay reachable.
+  assert.equal(spot.y, 8);
 });
 
 test('the option under the finger is the one that gets picked', () => {

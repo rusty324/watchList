@@ -120,7 +120,7 @@ export function rankByAffinity(items, affinity) {
 export function excludeSet(items) {
   const set = new Set();
   for (const [key, item] of Object.entries(items)) {
-    if (item.watched || item.inWatchlist || item.rating) set.add(key);
+    if (item.watched || item.inWatchlist || item.rating || item.hidden) set.add(key);
   }
   return set;
 }

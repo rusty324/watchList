@@ -53,6 +53,7 @@ const PATHS = {
   search: '<circle cx="11" cy="11" r="7"/><path d="M16.5 16.5 21 21"/>',
   close: '<path d="M18 6 6 18M6 6l12 12"/>',
   back: '<path d="m15 18-6-6 6-6"/>',
+  forward: '<path d="m9 18 6-6-6-6"/>',
   check: '<path d="m4 12 5 5L20 6"/>',
   up: '<path d="M7 22V11l5-9a2.5 2.5 0 0 1 2.5 3l-1 5H20a2 2 0 0 1 2 2.4l-1.4 7A2 2 0 0 1 18.6 22H7Z"/><rect x="2" y="11" width="5" height="11" rx="1"/>',
   down: '<path d="M17 2v11l-5 9a2.5 2.5 0 0 1-2.5-3l1-5H4a2 2 0 0 1-2-2.4l1.4-7A2 2 0 0 1 5.4 2H17Z"/><rect x="17" y="2" width="5" height="11" rx="1"/>',
@@ -60,11 +61,19 @@ const PATHS = {
   // three strokes so it still reads at 12px in a tile badge.
   once: '<path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v5h-5"/><path d="M4 4l16 16"/>',
   eye: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>',
+  'eye-off': '<path d="M10.6 6.2A9.9 9.9 0 0 1 12 6c6.5 0 10 6 10 6a18 18 0 0 1-3.1 3.8M6.2 7.8A18 18 0 0 0 2 12s3.5 6 10 6a9.6 9.6 0 0 0 4-.8"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/><path d="M3 3l18 18"/>',
   bookmark: '<path d="M6 3h12a1 1 0 0 1 1 1v17l-7-4-7 4V4a1 1 0 0 1 1-1Z"/>',
   settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.6 1.6 0 0 0-1-1.5 1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1Z"/>',
   film: '<rect x="2" y="4" width="20" height="16" rx="2"/><path d="M7 4v16M17 4v16M2 12h20M2 8h5M2 16h5M17 8h5M17 16h5"/>',
   sparkle: '<path d="M12 3l1.9 5.6L19.5 10l-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.4L12 3Z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8L19 15Z"/>',
   refresh: '<path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/>',
+  'chevron-up': '<path d="m6 15 6-6 6 6"/>',
+  'chevron-down': '<path d="m6 9 6 6 6-6"/>',
+  // Three bars: the conventional grab affordance for a draggable row.
+  grip: '<path d="M4 7h16M4 12h16M4 17h16"/>',
+  queue: '<path d="M3 6h11M3 12h11M3 18h7"/><path d="M18 10v8M14 14h8"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  trash: '<path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13"/><path d="M10 11v6M14 11v6"/>',
 };
 
 export function icon(name, cls) {
@@ -171,6 +180,19 @@ export function skeletonGrid(count = 6) {
     { class: 'grid' },
     Array.from({ length: count }, () => h('div', { class: 'skeleton poster-sk' }))
   );
+}
+
+/**
+ * The window scrolls, not #view — it has no `overflow`, so the `view.scrollTop`
+ * this used to set was silently doing nothing.
+ *
+ * Lives here rather than in app.js because the views need it too (turning a
+ * page should put you back at the top) and importing app.js from a view would
+ * be circular.
+ */
+export function scrollToTop({ smooth = true } = {}) {
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  window.scrollTo({ top: 0, behavior: smooth && !reduce ? 'smooth' : 'auto' });
 }
 
 export function emptyState({ iconName = 'film', title, body, action }) {

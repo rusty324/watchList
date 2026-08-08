@@ -7,10 +7,13 @@ site on GitHub Pages — no server, no accounts, no build step.
 - **Browse** — search TMDB, or get recommendations built from your own ratings.
 - **Genres** — pick a genre, get picks in it you haven't seen, filter to films or
   TV. Anime is its own tile, sourced from AniList.
-- **Lists** — everything you've tracked, with filters that combine and eleven
-  sort orders.
+- **Lists** — everything you've tracked, with filters that combine, eleven sort
+  orders, and paging that keeps a four-figure library quick.
+- **Playlists** — named, hand-ordered sets of titles, rearranged by drag or by
+  button.
 - **Three verdicts** — *Liked it*, *One and done* ("glad I saw it, but never
-  again"), and *Not for me*, which you can hide from view entirely.
+  again"), and *Not for me*, which you can hide from view entirely. Press and
+  hold any poster to set one, or to hide a title outright.
 - **Where to watch** — what's streaming, free, rentable or buyable in your
   country, with your own subscriptions marked.
 - **Movies** — year, genres, IMDb / Rotten Tomatoes / TMDB scores, a synopsis,
@@ -64,7 +67,8 @@ survives a lost phone and follows you between devices.
 
 Conflicts resolve **per title, newest edit wins** — rating a film on your phone
 and ticking off episodes on an iPad both survive; only edits to the same title
-race each other.
+race each other. Playlists resolve the same way but a whole playlist at a time,
+since an order has no element-wise merge.
 
 Whether or not you use sync, **Settings → Save backup** writes a JSON file you
 can restore later.
@@ -90,6 +94,8 @@ js/
   idb.js                 TTL cache on IndexedDB
   tmdb.js                TMDB client + normalization
   omdb.js                IMDb / Rotten Tomatoes, with quota discipline
+  providers.js           per-region availability index for the platform filters
+  reorder.js             drag-a-row-by-its-handle, for playlist order
   sort.js                list filters and comparators
   recommend.js           recommendation scoring
   sync.js                Gist push/pull and the merge rule
@@ -130,10 +136,10 @@ hide is never a rating you can't undo.
 
 ### Filters that combine
 
-The Lists tab's filters are grouped — Status, Type, Rating and Genre — and
-several can be on at once. **Picks inside a group widen the results; picks
-across groups narrow them.** So Movies + TV + Liked means "liked films and
-shows", while Movies + Liked means "liked films".
+The Lists tab's filters are grouped — Status, Type, Rating, Genre, Stream and
+Rent/buy — and several can be on at once. **Picks inside a group widen the
+results; picks across groups narrow them.** So Movies + TV + Liked means "liked
+films and shows", while Movies + Liked means "liked films".
 
 Grouping is what makes multi-select work here at all: several of these exclude
 each other by construction (nothing is both Watched and Not watched, and a title
@@ -145,6 +151,63 @@ full catalog of 21 — a genre you own nothing in would only ever return nothing
 
 **"Not for me" titles are hidden by default.** Selecting the *Not for me* chip
 always reveals them, and Settings → Display can turn the hiding off entirely.
+
+### Filtering by platform
+
+Two of those groups — **Stream** and **Rent/buy** — filter by service: what in
+your library is on Netflix, what you'd have to buy. Subscription and free/ads
+collapse into Stream, since both mean watching it without paying for that title;
+rent and buy collapse into Rent/buy, since both are a transaction. As with
+genres, the chips only offer services your library is actually on.
+
+These cost something the other filters don't. Every other filter reads a field
+already on the title, but availability is a **separate lookup per title, per
+country**, and TMDB has no batch endpoint for it. So the app doesn't go and
+fetch a hundred of them the moment you open the Lists tab. Instead:
+
+- Opening any title records its availability for free — the sheet was fetching
+  it anyway for the Where to watch box.
+- A **Find where to watch** control under the filters fills in the rest, in
+  batches of 40, telling you how many are left.
+
+A title nobody has checked yet matches no platform, which is the truthful
+answer rather than a guess — if a filter comes back empty and something is still
+unchecked, the empty state says so.
+
+The index is device-local and keyed by country. It is deliberately **not** part
+of your synced data: availability is regional and changes as licences move, so
+syncing it would have one device overwrite another's answer with something
+neither of you chose, for a value that goes stale on its own anyway. Changing
+your region in Settings clears it.
+
+### Long lists
+
+The Lists tab shows **50 titles a page**. The page controls appear twice — a
+compact pair beside the Sort menu and a full set under the grid — so turning a
+page never means scrolling past fifty posters to reach a button. The bottom one
+carries a picker to jump straight to a page; the top one has no room for that
+next to a sort menu, so it shows your position and leaves jumping to its twin.
+
+Anything that changes what matches — a filter, a sort, the filter box — takes
+you back to page 1, and turning a page returns you to the top.
+
+This is a performance measure, not a tidiness one. Filtering and sorting a
+four-figure library costs about **3 ms**; building the tiles is what hurts,
+since each is several elements plus a press-and-hold listener that the browser
+then has to lay out. Measured at phone speed with 1,200 titles:
+
+| | before | after |
+| --- | --- | --- |
+| Opening the tab | 1,484 ms | 399 ms |
+| Tiles in the page | 660 | 50 |
+| Turning a page | — | 60 ms |
+
+The filter box is also **debounced**. It used to redraw on every keystroke, so
+typing an eight-letter title meant eight full rebuilds — with a large library
+that was the single slowest thing in the app.
+
+Browse and Genres aren't paged: an API page is twenty-odd results, which was
+never the problem.
 
 ### Search filters
 
@@ -163,10 +226,20 @@ Browse clears the search, and on Genres backs out to the genre grid.
 
 ### Rating without opening anything
 
-**Press and hold a poster for about half a second**, then slide onto one of the
-three verdicts that appear above it and let go. Release anywhere else and
-nothing happens. Dragging onto the verdict already set clears it, the same as
-tapping it twice in the detail sheet does.
+**Press and hold a poster for about half a second.** Four targets appear around
+your fingertip — the three verdicts in a row just above it, and **Hide** just
+below — so slide onto one and let go.
+
+```
+         [ Liked it ] [ One and done ] [ Not for me ]
+                          (finger)
+                          [  Hide  ]
+```
+
+They open around the **finger**, not around the tile, so the slide is short
+wherever on a poster you happened to press. Release without sliding, or
+anywhere that isn't a target, and nothing happens. Dragging onto the option
+already set undoes it, the same as tapping it twice in the detail sheet.
 
 Works on every poster grid — Browse, Genres and Lists. Anime tiles from the
 AniList grid have no TMDB id until they're opened, so releasing on an option
@@ -177,6 +250,49 @@ shipped the Vibration API, so the feedback is visual. And it has **no keyboard
 equivalent** — a long-press can't have one — so it's an accelerator rather than
 a new capability; the detail sheet's rating row offers the same three verdicts
 to everyone.
+
+### Playlists
+
+A playlist is a handful of titles **in an order you choose** — a run to work
+through, a marathon, a set to show someone. The watchlist is one flat bag; this
+is the part where sequence matters.
+
+Open any film or show and use **Add to playlist** in its action row. Any title
+qualifies, watchlisted or not: a playlist of things you've already seen is as
+reasonable as one of things you haven't. The Lists tab's header has a button for
+the playlist index, and each playlist opens as its own screen.
+
+Reorder a row by **dragging its handle**, or with the **up/down buttons** beside
+it. The handle is why dragging never fights scrolling the page — a finger that
+lands anywhere else on the row still scrolls, exactly as before. The buttons
+aren't a fallback for weak pointers so much as the only path that works without
+one: a drag can't have a keyboard equivalent.
+
+**Marking a title watched leaves it where it is,** with a tick. A playlist is a
+record of what you assembled, not a queue that empties itself, so nothing
+disappears from under you — remove things when you mean to.
+
+Two notes on how they sync. Playlists merge **per playlist, whole**: unlike a
+title, where the newer edit only wins that title's fields, an ordered list
+reordered on two devices has no sensible element-wise merge, so the later edit
+takes all of it. And deleting one leaves a tombstone rather than removing the
+record, because otherwise the other device's copy would simply reappear on the
+next pull.
+
+### Hiding a title
+
+**Hide** is the fourth press-and-hold target, and it is not a verdict. *Not for
+me* is an opinion — it steers the recommender away from that title's genres.
+Hiding records no opinion at all; it just takes the title out of your way.
+
+A hidden title is gone from **Browse, Genres, your recommendations and your
+Lists**. Searching by name still finds it, and the sheet then says it's hidden
+and offers to un-hide it — the same principle as "Not for me": something you
+typed the name of should never look like it doesn't exist.
+
+**Settings → Hidden titles** lists everything you've hidden with an un-hide
+button on each, plus *Un-hide all*. Because hiding removes a title from every
+grid, that list is the one place it's guaranteed to be reachable.
 
 ### When something stops working
 
@@ -193,14 +309,21 @@ can't report a dead service as healthy.
 ### Genres
 
 The middle tab opens on a grid of 21 genres. Pick one and you get popular titles
-in it, minus anything you've already watched, rated or listed, re-ranked by your
-taste — within a single genre the shared genre cancels out, so what actually
+in it, minus anything you've already watched, rated, hidden or listed, re-ranked
+by your taste — within a single genre the shared genre cancels out, so what actually
 moves the order is a candidate's *other* genres. Chips filter to Movies or TV,
 and **Show all** drops the exclusion when you'd rather browse a genre's canon
 than get new-to-you picks.
 
 Genres that TMDB only has for one medium (Horror is film-only, Reality is
 TV-only) don't offer a filter that could only ever come back empty.
+
+**A genre keeps digging.** Subtracting everything you've dealt with used to
+leave nothing once you'd worked through the first page of results — and the more
+of a genre you'd seen, the more certain that was. It now keeps requesting pages
+until it has 40 new-to-you titles, giving up after five. Pages are cached
+individually, so going back into a genre costs nothing, and the empty state
+tells you how far it looked before running out.
 
 **Genre chips in a detail sheet are tappable** and open that genre with the
 medium carried over — a TV show's *Drama* chip opens Drama already filtered to

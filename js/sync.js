@@ -7,6 +7,10 @@
  * Conflict rule: last edit wins PER ITEM, not per blob. Rating a film on your
  * phone and checking off episodes on an iPad therefore both survive — only
  * edits to the *same* title race, and there the newer `updatedAt` wins.
+ *
+ * Playlists follow the same rule per playlist, but the unit is the whole
+ * playlist rather than a field of it: an ordered array reordered on two devices
+ * has no sensible element-wise merge, so the later edit takes all of it.
  */
 
 import { state, secrets, saveSecrets, persistNow, notifyAll } from './store.js';
@@ -51,6 +55,7 @@ export function isConfigured() {
  */
 export function mergeData(local, remote) {
   const items = { ...(remote?.items || {}) };
+  const playlists = { ...(remote?.playlists || {}) };
 
   for (const [key, mine] of Object.entries(local?.items || {})) {
     const theirs = items[key];
@@ -71,10 +76,19 @@ export function mergeData(local, remote) {
     items[key] = scores ? { ...winner, scores } : { ...winner };
   }
 
+  for (const [id, mine] of Object.entries(local?.playlists || {})) {
+    const theirs = playlists[id];
+    // Whole-playlist last-write-wins. A tombstone is just another edit, which
+    // is what stops a delete on one device being undone by the other's stale
+    // copy on the next pull.
+    if (!theirs || (mine.updatedAt || 0) >= (theirs.updatedAt || 0)) playlists[id] = mine;
+  }
+
   const localNewer = newestEdit(local) >= newestEdit(remote);
   return {
     version: local?.version || remote?.version || 1,
     items,
+    playlists,
     settings: {
       ...(remote?.settings || {}),
       ...(localNewer ? local?.settings || {} : {}),
@@ -86,6 +100,9 @@ function newestEdit(data) {
   let newest = 0;
   for (const item of Object.values(data?.items || {})) {
     if ((item.updatedAt || 0) > newest) newest = item.updatedAt || 0;
+  }
+  for (const playlist of Object.values(data?.playlists || {})) {
+    if ((playlist.updatedAt || 0) > newest) newest = playlist.updatedAt || 0;
   }
   return newest;
 }
@@ -113,7 +130,11 @@ async function gh(path, options = {}) {
 function payload() {
   // Built from `state` only. Secrets live in a different storage key and are
   // structurally unreachable from here.
-  return JSON.stringify({ version: state.version, items: state.items, settings: state.settings }, null, 2);
+  return JSON.stringify(
+    { version: state.version, items: state.items, playlists: state.playlists, settings: state.settings },
+    null,
+    2
+  );
 }
 
 async function readGist(id) {
@@ -137,8 +158,12 @@ export async function pull({ quiet = false } = {}) {
   try {
     const remote = await readGist(secrets.gistId);
     if (remote) {
-      const merged = mergeData({ items: state.items, settings: state.settings, version: state.version }, remote);
+      const merged = mergeData(
+        { items: state.items, playlists: state.playlists, settings: state.settings, version: state.version },
+        remote
+      );
       state.items = merged.items;
+      state.playlists = merged.playlists;
       state.settings = merged.settings;
       persistNow();
       notifyAll('sync-pull');

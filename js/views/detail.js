@@ -22,6 +22,7 @@ import {
 } from '../store.js';
 import { movieDetail, tvDetail, seasonDetail, personCredits, posterUrl } from '../tmdb.js';
 import { fetchScores } from '../omdb.js';
+import { recordAvailability } from '../providers.js';
 import { enrich, resolveToTmdb } from '../anilist.js';
 import {
   heroBlock,
@@ -31,6 +32,8 @@ import {
   checkboxAction,
   castRow,
   providerBox,
+  hiddenNotice,
+  playlistAction,
   genreChip,
   snapshot,
 } from './parts.js';
@@ -94,6 +97,9 @@ export function openMovie(id, hint) {
       // Refresh whatever metadata we already had stored, without claiming this
       // as a user edit for sync purposes.
       if (getItem('movie', id)) upsertItem('movie', id, snapshot(meta), { touch: false });
+      // Free: this request already carried the availability the Lists tab's
+      // platform filters need, so opening anything tops the index up.
+      recordAvailability('movie', id, meta.providers);
 
       const rerenderTitle = () => api.setTitle(displayTitle(meta, getItem('movie', id)));
       rerenderTitle();
@@ -119,7 +125,8 @@ export function openMovie(id, hint) {
         }),
         scores.node,
         rating.node,
-        h('div', { class: 'action-row' }, watched.node, watchlist.node),
+        h('div', { class: 'action-row' }, watched.node, watchlist.node, playlistAction(meta).node),
+        hiddenNotice(meta).node,
         providerBox(meta.providers),
         meta.overview ? h('p', { class: 'overview' }, meta.overview) : null,
         meta.cast?.length ? h('h3', { class: 'section-title' }, 'Cast') : null,
@@ -265,6 +272,7 @@ export function openTv(id, hint) {
       // progress — otherwise the first render divides by zero episodes.
       upsertItem('tv', id, snapshot(meta), { touch: false });
       persist('tv-meta');
+      recordAvailability('tv', id, meta.providers);
 
       const rerenderTitle = () => api.setTitle(displayTitle(meta, getItem('tv', id)));
       rerenderTitle();
@@ -324,7 +332,8 @@ export function openTv(id, hint) {
         scores.node,
         rating.node,
         progress,
-        h('div', { class: 'action-row' }, showWatched.node, watchlist.node),
+        h('div', { class: 'action-row' }, showWatched.node, watchlist.node, playlistAction(meta).node),
+        hiddenNotice(meta).node,
         providerBox(meta.providers),
         meta.overview ? h('p', { class: 'overview' }, meta.overview) : null,
         meta.cast?.length ? h('h3', { class: 'section-title' }, 'Cast') : null,

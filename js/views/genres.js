@@ -11,7 +11,7 @@ import { discoverByGenre, hasTmdbKey } from '../tmdb.js';
 import { browseAnime, browseByTag, rejectSeen } from '../anilist.js';
 import { GENRES, findGenre, availableTypes, genreIdFor } from '../genres.js';
 import { excludeSet, genreAffinity, rankByAffinity } from '../recommend.js';
-import { hiddenByPreference } from '../sort.js';
+import { suppressed } from '../sort.js';
 import { openItem } from './detail.js';
 import { openSettings } from './settings.js';
 
@@ -173,65 +173,110 @@ async function load(host, genre) {
   fill(host, skeletonGrid(6));
   const token = ++loadToken;
 
-  let items;
-  try {
-    items = await fetchForGenre(genre);
-  } catch (err) {
-    if (token !== loadToken) return;
-    fill(host, emptyState({ title: 'Could not load picks', body: err?.message || String(err) }));
-    return;
-  }
-  // A slower earlier tap must not overwrite a newer one's results.
-  if (token !== loadToken) return;
-
   const exclude = ui.unseenOnly ? excludeSet(state.items) : new Set();
   const affinity = genreAffinity(Object.values(state.items));
+  const keep = [];
+  const seen = new Set();
+  let pagesRead = 0;
 
-  let filtered = items.filter((item) => {
-    if (exclude.has(`${item.type}:${item.id}`)) return false;
-    return !hiddenByPreference(storedFor(item), state.settings);
-  });
+  // Keep asking for pages until enough survive the exclusion. Without this a
+  // genre you've worked through says "nothing new" forever, because only the
+  // first page was ever fetched — and the more of a genre you've seen, the more
+  // certain that is to happen.
+  for (let page = 1; page <= MAX_PAGES && keep.length < TARGET; page++) {
+    let batch;
+    let empty;
+    try {
+      ({ items: batch, empty } = await fetchForGenre(genre, page));
+    } catch (err) {
+      if (token !== loadToken) return;
+      // A later page failing after earlier ones worked isn't worth throwing the
+      // results away for.
+      if (keep.length) break;
+      fill(host, emptyState({ title: 'Could not load picks', body: err?.message || String(err) }));
+      return;
+    }
+    // Checked every page, not just at the end: the loop widens the window in
+    // which a newer tap can overtake this one.
+    if (token !== loadToken) return;
 
-  // AniList entries have no TMDB id yet, so the id-keyed exclusion above can't
-  // see them — they need matching by title instead.
-  if (genre.source === 'anilist' && ui.unseenOnly) {
-    filtered = rejectSeen(filtered, state.items);
+    pagesRead = page;
+    // Only stop when the source itself is out. A page that came back full but
+    // filtered down to nothing still has pages after it.
+    if (empty) break;
+
+    // AniList entries have no TMDB id yet, so the id-keyed exclusion below
+    // can't see them — they need matching by title instead.
+    if (genre.source === 'anilist' && ui.unseenOnly) batch = rejectSeen(batch, state.items);
+
+    for (const item of batch) {
+      const key = `${item.type}:${item.id}`;
+      // TMDB shouldn't repeat across pages, but interleaving and AniList's
+      // season collapsing both make this worth guaranteeing.
+      if (seen.has(key)) continue;
+      seen.add(key);
+      if (exclude.has(key)) continue;
+      if (suppressed(storedFor(item), state.settings)) continue;
+      keep.push(item);
+    }
   }
 
-  if (!filtered.length) {
+  if (!keep.length) {
     fill(host,
       emptyState({
         iconName: 'sparkle',
         title: ui.unseenOnly ? 'Nothing new here' : 'Nothing found',
         body: ui.unseenOnly
-          ? 'You’ve already seen or rated everything this genre turned up. Tap “Show all” to see them anyway.'
+          ? `You’ve already seen, rated or hidden everything in the first ${pagesRead} page${pagesRead === 1 ? '' : 's'} of this genre. Tap “Show all” to see them anyway.`
           : 'This genre returned no titles.',
       })
     );
     return;
   }
 
-  fill(host, grid(rankByAffinity(filtered, affinity).slice(0, 40), storedFor, openItem));
+  fill(host, grid(rankByAffinity(keep, affinity).slice(0, TARGET), storedFor, openItem));
 }
 
 let loadToken = 0;
 
-async function fetchForGenre(genre) {
-  if (genre.tag) return browseByTag(genre.tag, { type: ui.type });
-  if (genre.source === 'anilist') return browseAnime({ type: ui.type });
+// How many new-to-you titles are worth filling a screen with, and how far to
+// dig for them. Every page is one cached request per medium, so the cap is what
+// keeps an exhausted genre from turning into a stack of round trips.
+const TARGET = 40;
+const MAX_PAGES = 5;
+
+/**
+ * One page of a genre.
+ *
+ * Returns `empty` separately from an empty `items`, because they mean different
+ * things to the paging loop: `empty` is the source running out, while an empty
+ * `items` can just be a page whose every title was filtered out here. Conflating
+ * them stops Animation at page one, since its first result is Ghibli and gets
+ * dropped as anime.
+ */
+async function fetchForGenre(genre, page = 1) {
+  if (genre.tag) {
+    const items = await browseByTag(genre.tag, { type: ui.type, page });
+    return { items, empty: !items.length };
+  }
+  if (genre.source === 'anilist') {
+    const items = await browseAnime({ type: ui.type, page });
+    return { items, empty: !items.length };
+  }
 
   const types = availableTypes(genre).filter((t) => ui.type === 'all' || t === ui.type);
   const pages = await Promise.all(
-    types.map((type) => discoverByGenre(type, genreIdFor(genre, type)))
+    types.map((type) => discoverByGenre(type, genreIdFor(genre, type), { page }))
   );
 
   let items = interleave(pages);
+  const empty = !items.length;
   if (genre.excludeJapanese) {
     // TMDB offers with_original_language but no "without", so anime has to be
     // dropped here rather than in the query.
     items = items.filter((i) => i.originalLanguage !== 'ja');
   }
-  return items;
+  return { items, empty };
 }
 
 /** Round-robins movie and TV results so one type can't monopolise the top. */

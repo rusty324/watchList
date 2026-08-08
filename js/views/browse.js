@@ -5,7 +5,7 @@ import { h, icon, clear, fill, grid, skeletonGrid, emptyState, displayTitle, til
 import { state, getItem, hasKeys } from '../store.js';
 import { search, trending, hasTmdbKey } from '../tmdb.js';
 import { buildRecommendations, seedsFrom } from '../recommend.js';
-import { hiddenByPreference, applySearch, searchGenres, SEARCH_SORTS } from '../sort.js';
+import { suppressed, applySearch, searchGenres, SEARCH_SORTS } from '../sort.js';
 import { openItem } from './detail.js';
 import { openSettings } from './settings.js';
 
@@ -268,10 +268,10 @@ async function renderHome(host) {
 
   fill(host, skeletonGrid(6));
 
-  // Applies to the browsing rows only. Search deliberately still returns
-  // disliked titles — see hiddenByPreference in sort.js.
+  // Applies to the browsing rows only. Search deliberately still returns both
+  // disliked and hidden titles — see suppressed() in sort.js.
   const visible = (items) =>
-    items.filter((i) => !hiddenByPreference(storedFor(i), state.settings));
+    items.filter((i) => !suppressed(storedFor(i), state.settings));
 
   const seeds = seedsFrom(state.items);
   const sections = [];

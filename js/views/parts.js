@@ -5,7 +5,7 @@
  * scroll position halfway down a season's episode list.
  */
 
-import { h, icon, posterBox, displayTitle, toast } from '../ui.js';
+import { h, icon, fill, openSheet, posterBox, displayTitle, toast } from '../ui.js';
 import { profileUrl, posterUrl } from '../tmdb.js';
 import { genreKeyFromName } from '../genres.js';
 import {
@@ -15,6 +15,13 @@ import {
   clearRating,
   setWatchlist,
   setTitlePref,
+  setHidden,
+  itemKey,
+  livePlaylists,
+  playlistsContaining,
+  createPlaylist,
+  addToPlaylist,
+  removeFromPlaylist,
 } from '../store.js';
 
 /* ---------- hero ---------- */
@@ -272,6 +279,147 @@ export function checkboxAction(label, isOn, setOn) {
   update();
 
   return { node, update };
+}
+
+/**
+ * The "hidden" toggle on a detail sheet.
+ *
+ * Only rendered once a title is actually hidden. Hiding is a press-and-hold
+ * gesture on a grid, and a hidden title is gone from every grid — so without
+ * this the only way back would be Settings, and a title you found by searching
+ * its name would give no hint about why it never shows up.
+ */
+export function hiddenNotice(meta) {
+  const node = h('div', { class: 'hidden-note', hidden: true });
+
+  function update() {
+    const on = Boolean(getItem(meta.type, meta.id)?.hidden);
+    node.hidden = !on;
+    if (!on) return;
+    fill(node,
+      icon('eye-off'),
+      h('span', {}, 'Hidden from Browse, Genres and your Lists.'),
+      h(
+        'button',
+        {
+          type: 'button',
+          class: 'chip',
+          onclick: () => {
+            setHidden(meta.type, meta.id, false, snapshot(meta));
+            update();
+            toast('No longer hidden');
+          },
+        },
+        'Un-hide'
+      )
+    );
+  }
+  update();
+
+  return { node, update };
+}
+
+/**
+ * "Add to playlist" for a detail sheet, plus the picker it opens.
+ *
+ * Lives in the action row, which is a vertical stack (see .action-row in
+ * app.css), so a third action costs no horizontal room. Offered on every title,
+ * watchlisted or not — a playlist of things you've already seen is as reasonable
+ * as one of things you haven't.
+ */
+export function playlistAction(meta) {
+  const key = itemKey(meta.type, meta.id);
+  const label = h('span', {});
+
+  const node = h(
+    'button',
+    {
+      type: 'button',
+      class: 'action',
+      onclick: () => openPlaylistPicker(meta, update),
+    },
+    icon('queue'),
+    label
+  );
+
+  function update() {
+    const inLists = playlistsContaining(key);
+    node.setAttribute('aria-pressed', String(inLists.length > 0));
+    label.textContent = inLists.length
+      ? inLists.length === 1
+        ? `In “${inLists[0].name}”`
+        : `In ${inLists.length} playlists`
+      : 'Add to playlist';
+  }
+  update();
+
+  return { node, update };
+}
+
+function openPlaylistPicker(meta, onChange) {
+  const key = itemKey(meta.type, meta.id);
+
+  return openSheet({
+    title: 'Add to playlist',
+    onClose: () => onChange?.(),
+    render: (api) => {
+      const list = h('div', {});
+
+      function paint() {
+        const lists = livePlaylists();
+        fill(list,
+          lists.length
+            ? lists.map((playlist) => {
+                const on = playlist.items.includes(key);
+                return h(
+                  'button',
+                  {
+                    type: 'button',
+                    class: 'action',
+                    'aria-pressed': String(on),
+                    onclick: () => {
+                      if (on) removeFromPlaylist(playlist.id, key);
+                      else addToPlaylist(playlist.id, key, snapshot(meta));
+                      paint();
+                      onChange?.();
+                    },
+                  },
+                  h('div', { class: 'box' }, icon('check')),
+                  h('span', {}, playlist.name),
+                  h('span', { class: 'pl-count' },
+                    `${playlist.items.length} title${playlist.items.length === 1 ? '' : 's'}`)
+                );
+              })
+            : h('p', { class: 'hint' }, 'No playlists yet — make one below.')
+        );
+      }
+      paint();
+
+      fill(api.body,
+        h('p', { class: 'hint', style: 'margin:0 0 12px' },
+          'A playlist keeps titles in an order you choose. Reorder it on the Lists tab.'),
+        list,
+        h(
+          'button',
+          {
+            type: 'button',
+            class: 'btn secondary',
+            style: 'margin-top:14px',
+            onclick: () => {
+              const name = prompt('Name this playlist:');
+              if (name === null) return;
+              const made = createPlaylist(name);
+              addToPlaylist(made.id, key, snapshot(meta));
+              paint();
+              onChange?.();
+              toast(`Added to “${made.name}”`);
+            },
+          },
+          'New playlist with this title'
+        )
+      );
+    },
+  });
 }
 
 /* ---------- where to watch ---------- */

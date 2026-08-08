@@ -10,7 +10,7 @@
 
 const DATA_KEY = 'wl.data.v1';
 const SECRETS_KEY = 'wl.secrets.v1';
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 const listeners = new Set();
 let saveTimer = null;
@@ -33,6 +33,9 @@ function emptyData() {
   return {
     version: SCHEMA_VERSION,
     items: {},
+    // Named, hand-ordered collections. Keyed by generated id rather than by
+    // name, so renaming one can't orphan anything pointing at it.
+    playlists: {},
     settings: {
       defaultTitleLang: 'en',
       theme: 'auto',
@@ -62,6 +65,9 @@ function read(key, fallback) {
 /** Runs on load so older payloads (from a Gist or an export) stay usable. */
 function migrate(data) {
   if (!data.items || typeof data.items !== 'object') data.items = {};
+  // v3 added playlists. Nothing to convert — an install without them just has
+  // none — but the key has to exist before anything writes to it.
+  if (!data.playlists || typeof data.playlists !== 'object') data.playlists = {};
   const incoming = Number(data.version) || 1;
   // Merge over the defaults so settings added in a later version are present
   // even when the payload came from an older export or another device's Gist.
@@ -138,11 +144,17 @@ export function getItem(type, id) {
   return state.items[itemKey(type, id)] || null;
 }
 
-/** True once the item carries any user intent worth keeping around. */
+/**
+ * True once the item carries any user intent worth keeping around.
+ *
+ * `hidden` counts. Most hidden titles carry nothing else — the whole point is
+ * to dismiss something you have no opinion about — so leaving it out would have
+ * pruneUntracked quietly delete the hide and bring the title back.
+ */
 export function isTracked(item) {
   if (!item) return false;
   return Boolean(
-    item.watched || item.inWatchlist || item.rating || tvWatchedCount(item) > 0
+    item.watched || item.inWatchlist || item.rating || item.hidden || tvWatchedCount(item) > 0
   );
 }
 
@@ -171,11 +183,20 @@ export function upsertItem(type, id, patch, { touch = true } = {}) {
   return next;
 }
 
-/** Drops items the user has no relationship with, keeping storage lean. */
+/**
+ * Drops items the user has no relationship with, keeping storage lean.
+ *
+ * Playlist membership counts as a relationship, but isTracked can't see it — it
+ * is handed one item and knows nothing about playlists — so the referenced keys
+ * are collected here and spared. Without this, a title added to a playlist and
+ * nothing else would lose its record, and the row would render with no title
+ * and no poster.
+ */
 export function pruneUntracked() {
+  const inPlaylists = playlistMemberKeys();
   let removed = 0;
   for (const [key, item] of Object.entries(state.items)) {
-    if (!isTracked(item)) {
+    if (!isTracked(item) && !inPlaylists.has(key)) {
       delete state.items[key];
       removed++;
     }
@@ -200,6 +221,41 @@ export function clearRating(type, id) {
 export function setWatchlist(type, id, on, meta) {
   upsertItem(type, id, { ...(meta || {}), inWatchlist: on });
   persist('watchlist');
+}
+
+/**
+ * "Stop showing me this."
+ *
+ * Distinct from a Not-for-me rating, which is a verdict about the title and
+ * steers the recommender away from its genres. Hiding is about the grid: no
+ * opinion recorded, just gone. Stored on the item, so it exports and syncs like
+ * any other decision.
+ */
+export function setHidden(type, id, on, meta) {
+  upsertItem(type, id, { ...(meta || {}), hidden: on });
+  persist('hidden');
+}
+
+/** Everything currently hidden, newest hide first, for the Settings list. */
+export function hiddenItems() {
+  return Object.values(state.items)
+    .filter((i) => i.hidden)
+    .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+}
+
+export function unhideAll() {
+  let cleared = 0;
+  for (const item of Object.values(state.items)) {
+    if (!item.hidden) continue;
+    item.hidden = false;
+    item.updatedAt = Date.now();
+    cleared++;
+  }
+  // Un-hiding is usually the last thing keeping a record alive, so drop the
+  // ones that now hold nothing rather than leaving empty shells to sync.
+  pruneUntracked();
+  persist('hidden');
+  return cleared;
 }
 
 export function setTitlePref(type, id, pref) {
@@ -305,6 +361,123 @@ export function setShowWatched(id, on, meta) {
   return item;
 }
 
+/* ---------- playlists ---------- */
+
+/**
+ * Named, hand-ordered collections of titles.
+ *
+ * Order is the array's order, and the array holds item keys rather than copies,
+ * so a title renamed or re-fetched from TMDB stays the same entry. Each playlist
+ * carries its own `updatedAt` so Gist sync can merge them the way it merges
+ * items — see mergeData in sync.js.
+ */
+function newId() {
+  // randomUUID needs a secure context; file:// and plain http fall back.
+  if (globalThis.crypto?.randomUUID) return crypto.randomUUID();
+  return `pl-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/** Every playlist that hasn't been deleted, newest edit first. */
+export function livePlaylists() {
+  return Object.values(state.playlists || {})
+    .filter((p) => p && !p.deletedAt)
+    .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+}
+
+export function getPlaylist(id) {
+  const found = state.playlists?.[id];
+  return found && !found.deletedAt ? found : null;
+}
+
+/** Item keys held by any live playlist — what pruneUntracked must not delete. */
+export function playlistMemberKeys() {
+  const keys = new Set();
+  for (const playlist of livePlaylists()) {
+    for (const key of playlist.items || []) keys.add(key);
+  }
+  return keys;
+}
+
+export function playlistsContaining(key) {
+  return livePlaylists().filter((p) => (p.items || []).includes(key));
+}
+
+function touchPlaylist(playlist) {
+  playlist.updatedAt = Date.now();
+  persist('playlist');
+  return playlist;
+}
+
+export function createPlaylist(name) {
+  const id = newId();
+  state.playlists[id] = {
+    id,
+    name: String(name || '').trim() || 'Untitled playlist',
+    items: [],
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    deletedAt: null,
+  };
+  persist('playlist');
+  return state.playlists[id];
+}
+
+export function renamePlaylist(id, name) {
+  const playlist = getPlaylist(id);
+  if (!playlist) return null;
+  playlist.name = String(name || '').trim() || playlist.name;
+  return touchPlaylist(playlist);
+}
+
+/**
+ * Deletes by tombstone, keeping the record.
+ *
+ * Removing the key outright would only work on one device: the other still has
+ * its copy, and a merge has no way to tell "deleted here" from "not seen here
+ * yet", so the playlist would come back on the next pull.
+ */
+export function deletePlaylist(id) {
+  const playlist = getPlaylist(id);
+  if (!playlist) return false;
+  playlist.deletedAt = Date.now();
+  playlist.items = [];
+  touchPlaylist(playlist);
+  return true;
+}
+
+/**
+ * `meta` is stored against the title so a playlist row has a name and a poster
+ * to draw even for something otherwise untracked — which is the common case,
+ * since adding to a playlist is not itself a rating or a watch mark. Written
+ * with touch:false: the playlist changed, the title didn't, and bumping the
+ * item's updatedAt would let it win a sync race against a real edit elsewhere.
+ */
+export function addToPlaylist(id, key, meta) {
+  const playlist = getPlaylist(id);
+  if (!playlist || !key) return null;
+  if (meta?.type != null && meta?.id != null) {
+    upsertItem(meta.type, meta.id, meta, { touch: false });
+  }
+  if (playlist.items.includes(key)) return playlist; // adding twice is a no-op
+  playlist.items = [...playlist.items, key];
+  return touchPlaylist(playlist);
+}
+
+export function removeFromPlaylist(id, key) {
+  const playlist = getPlaylist(id);
+  if (!playlist) return null;
+  if (!playlist.items.includes(key)) return playlist;
+  playlist.items = playlist.items.filter((k) => k !== key);
+  return touchPlaylist(playlist);
+}
+
+export function setPlaylistOrder(id, keys) {
+  const playlist = getPlaylist(id);
+  if (!playlist) return null;
+  playlist.items = [...keys];
+  return touchPlaylist(playlist);
+}
+
 /* ---------- scores ---------- */
 
 export function setScores(type, id, scores) {
@@ -336,6 +509,10 @@ export function replaceData(next) {
   const clean = migrate({ ...emptyData(), ...next });
   delete clean.exportedAt;
   state.items = clean.items;
+  // Assigned explicitly, like the others: `state` is a live binding the views
+  // hold, so anything not named here would survive a restore that should have
+  // replaced it — or be lost from a backup that contained it.
+  state.playlists = clean.playlists;
   state.settings = clean.settings;
   persistNow();
   notify('replace');

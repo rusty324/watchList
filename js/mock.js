@@ -263,10 +263,13 @@ const OMDB = {
 };
 
 /* Availability fixtures, chosen to exercise every rendering branch:
- *   Parasite       all four rows, and a provider in both `free` and `ads`
- *   Princess Bride rent/buy only — no way to stream it
- *   Breaking Bad   subscription streaming only
- *   Spirited Away  nothing at all, i.e. the empty state
+ *   Parasite        all four rows, and a provider in both `free` and `ads`
+ *   Princess Bride  rent/buy only — no way to stream it
+ *   Breaking Bad    subscription streaming only
+ *   Spirited Away   nothing at all, i.e. the empty state
+ *   Stranger Things the walkthrough never opens its sheet, so its availability
+ *                   can only reach the Lists tab's platform index through the
+ *                   backfill sweep — which is what makes that test meaningful
  */
 const PROVIDERS = {
   netflix: { provider_id: 8, provider_name: 'Netflix', logo_path: '/net.jpg', display_priority: 0 },
@@ -302,6 +305,11 @@ const WATCH = {
   },
   'tv:93405': {
     link: 'https://www.themoviedb.org/tv/93405/watch?locale=US',
+    flatrate: [PROVIDERS.netflix],
+    buy: [PROVIDERS.google],
+  },
+  'tv:66732': {
+    link: 'https://www.themoviedb.org/tv/66732/watch?locale=US',
     flatrate: [PROVIDERS.netflix],
     buy: [PROVIDERS.google],
   },
@@ -492,10 +500,15 @@ export function mockFetch(path, params = {}) {
   if (m) {
     const type = m[1];
     const wanted = Number(params.with_genres);
-    const results = allResults()
+    const all = allResults()
       .filter((r) => r.media_type === type)
       .filter((r) => (r.genres || []).some((g) => g.id === wanted));
-    return delay({ results, total_results: results.length });
+    // One title a page, so the Genres tab's "keep asking for pages" loop has
+    // something to walk. A real page is 20; what matters here is that page 2
+    // differs from page 1 and that running off the end returns nothing.
+    const page = Math.max(1, Number(params.page) || 1);
+    const results = all.slice(page - 1, page);
+    return delay({ results, total_results: all.length, page });
   }
 
   if (path === '/search/multi') {

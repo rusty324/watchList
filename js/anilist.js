@@ -42,7 +42,7 @@ const RELATION_FIELDS = `
 const BROWSE_QUERY = `
   query ($page: Int, $perPage: Int, $format_in: [MediaFormat]) {
     Page(page: $page, perPage: $perPage) {
-      media(type: ANIME, sort: POPULARITY_DESC, isAdult: false, format_in: $format_in) {
+      media(type: ANIME, sort: POPULARITY_DESC, isAdult: true, format_in: $format_in) {
         ${MEDIA_FIELDS}
         ${RELATION_FIELDS}
       }
@@ -53,7 +53,7 @@ const BROWSE_QUERY = `
 const TAG_QUERY = `
   query ($page: Int, $perPage: Int, $tag: String, $format_in: [MediaFormat]) {
     Page(page: $page, perPage: $perPage) {
-      media(type: ANIME, sort: POPULARITY_DESC, isAdult: false, tag: $tag, format_in: $format_in) {
+      media(type: ANIME, sort: POPULARITY_DESC, isAdult: true, tag: $tag, format_in: $format_in) {
         ${MEDIA_FIELDS}
         ${RELATION_FIELDS}
       }
@@ -63,7 +63,7 @@ const TAG_QUERY = `
 
 const MATCH_QUERY = `
   query ($search: String) {
-    Media(type: ANIME, search: $search, sort: SEARCH_MATCH) {
+    Media(type: ANIME, search: $search, sort: SEARCH_MATCH, isAdult: true) {
       ${MEDIA_FIELDS}
     }
   }

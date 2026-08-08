@@ -179,7 +179,10 @@ svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; 
 .filters { margin-bottom: 12px; }
 .filter-row { display: flex; align-items: center; gap: 9px; }
 .filter-row .f-label {
-  flex: 0 0 46px;
+  /* Wide enough for the longest label ("Rent/buy") at this size with room to
+   * spare; every row shares the width so the chip strips all start at the same
+   * x. A walkthrough check fails if a label ever gets close to its chips. */
+  flex: 0 0 62px;
   min-width: 0; /* or the label sizes to its own text and the rows misalign */
   font-size: 10.5px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
   color: var(--fg-faint);
@@ -189,11 +192,29 @@ svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; 
 .filter-row .chips { flex: 1; min-width: 0; margin-bottom: 5px; }
 .filter-row .chip { padding: 5px 11px; font-size: 12.5px; }
 .chip.clear-filters {
-  margin-left: 55px;
+  margin-left: 71px;
   background: transparent;
   color: var(--accent);
   padding-left: 0;
 }
+
+/* Seeding the platform index costs a request per title, so it gets a visible
+ * control with the count in it rather than happening silently on tab open. */
+.avail-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 0 4px 71px;
+  font-size: 11.5px;
+  color: var(--fg-faint);
+}
+.chip.avail-check {
+  background: transparent;
+  color: var(--accent);
+  padding: 6px 0; /* keeps a tappable height without widening the row */
+  font-size: 12px;
+}
+.chip.avail-check[disabled] { color: var(--fg-faint); }
 
 .sortbar { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
 .sortbar label { font-size: 13px; color: var(--fg-dim); font-weight: 600; }

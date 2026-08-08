@@ -562,6 +562,171 @@ if (await page.locator('.grid .tile').first().locator('.badge').count()) {
   problems.push('releasing away from the options still applied a rating');
 }
 
+/* ---- 10b. filtering the list by streaming and rent/buy platform ---- */
+
+// Rate a show without ever opening its sheet. Every other tracked title had its
+// availability recorded for free when its sheet loaded, so this is the only one
+// the backfill sweep can be shown to have found — which is what makes the test
+// mean anything.
+await page.fill('input[type="search"]', 'stranger');
+await page.waitForTimeout(900);
+{
+  const box = await page.locator('.grid .tile').first().boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.waitForTimeout(650);
+  if (!(await page.locator('.rate-opt[data-kind="up"]').count())) {
+    problems.push('could not press-and-hold to rate a title without opening it');
+    await page.mouse.up();
+  } else {
+    const opt = await page.locator('.rate-opt[data-kind="up"]').boundingBox();
+    await page.mouse.move(opt.x + opt.width / 2, opt.y + opt.height / 2, { steps: 6 });
+    await page.waitForTimeout(150);
+    await page.mouse.up();
+    await page.waitForTimeout(900);
+  }
+}
+
+await page.click('.tab[data-tab="lists"]');
+await page.waitForTimeout(900);
+// Section 10 left the "One and done" chip on.
+if (await page.locator('.chip.clear-filters:not([hidden])').count()) {
+  await page.locator('.chip.clear-filters').click();
+  await page.waitForTimeout(400);
+}
+if (!(await listedTitles()).includes('Stranger Things')) {
+  problems.push('the long-press rating did not add the title to the list');
+}
+
+const platformChips = (group) =>
+  page.locator(`.filter-row[data-group="${group}"] .chip`).allTextContents();
+const platChip = (group, name) =>
+  page.locator(`.filter-row[data-group="${group}"] .chip`, { hasText: name }).first();
+
+// The unchecked title is advertised rather than silently excluded.
+const checkLabel = await page.locator('.avail-check').textContent();
+console.log('availability control ->', checkLabel);
+if (!/\b1\b/.test(checkLabel)) {
+  problems.push(`the availability control did not offer to check the 1 missing title: "${checkLabel}"`);
+}
+await shot('21c-lists-availability-prompt');
+
+// Unchecked means unmatched: "not known to be on Netflix" is not "on Netflix".
+await platChip('stream', 'Netflix').click();
+await page.waitForTimeout(500);
+const netflixBefore = await listedTitles();
+console.log('on Netflix, before the sweep ->', netflixBefore.join(', '));
+if (netflixBefore.includes('Stranger Things')) {
+  problems.push('an unchecked title matched a platform filter');
+}
+await page.locator('.chip.clear-filters').click();
+await page.waitForTimeout(400);
+
+await page.locator('.avail-check').click();
+await page.waitForTimeout(1800);
+if (await page.locator('.avail-check').count()) {
+  problems.push('the availability control stayed after everything had been checked');
+}
+
+// The label column is a fixed width shared by every row, and the platform rows
+// carry the longest labels — so this is where a label would first collide with
+// the chips it labels.
+// The column has a fixed width, so a long label overflows its box rather than
+// widening it — measure the rendered text, not the box.
+const rowGeometry = await page.locator('.filter-row').evaluateAll((rows) =>
+  rows.map((r) => {
+    const el = r.querySelector('.f-label');
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const ink = range.getBoundingClientRect();
+    const chips = r.querySelector('.chips').getBoundingClientRect();
+    return {
+      group: r.dataset.group,
+      slack: Math.round(chips.left - ink.right),
+      chipX: Math.round(chips.left),
+    };
+  })
+);
+console.log('label-to-chip slack ->', rowGeometry.map((g) => `${g.group}:${g.slack}`).join(' '));
+for (const row of rowGeometry) {
+  if (row.slack < 6) {
+    problems.push(`the ${row.group} label leaves only ${row.slack}px before its chips`);
+  }
+}
+if (new Set(rowGeometry.map((g) => g.chipX)).size !== 1) {
+  problems.push(`filter rows are not aligned: chips start at ${rowGeometry.map((g) => g.chipX).join(', ')}`);
+}
+
+const streamChips = await platformChips('stream');
+const buyChips = await platformChips('buy');
+console.log('stream chips ->', streamChips.join(', '));
+console.log('rent/buy chips ->', buyChips.join(', '));
+if (!streamChips.includes('Netflix')) problems.push('the Stream row is missing Netflix');
+if (!buyChips.includes('Apple TV')) problems.push('the Rent/buy row is missing Apple TV');
+// Ad-supported folds into Stream rather than becoming a fifth group.
+if (!streamChips.includes('Tubi TV')) {
+  problems.push(`free/ad-supported services did not fold into Stream: ${streamChips.join('|')}`);
+}
+
+await platChip('stream', 'Netflix').click();
+await page.waitForTimeout(500);
+const netflixAfter = await listedTitles();
+console.log('on Netflix, after the sweep ->', netflixAfter.join(', '));
+if (!netflixAfter.includes('Stranger Things')) {
+  problems.push('the backfill did not reach the title whose sheet was never opened');
+}
+// Titles that stream nowhere stay out whether or not they have been checked.
+for (const gone of ['The Princess Bride', 'Spirited Away']) {
+  if (netflixAfter.includes(gone)) {
+    problems.push(`${gone} streams nowhere but survived a Stream filter`);
+  }
+}
+
+// Within the group it widens. Start from the narrow service, since Hulu's one
+// title is also on Netflix and the other order would prove nothing.
+await platChip('stream', 'Netflix').click();
+await page.waitForTimeout(400);
+await platChip('stream', 'Hulu').click();
+await page.waitForTimeout(500);
+const huluOnly = await listedTitles();
+await platChip('stream', 'Netflix').click();
+await page.waitForTimeout(500);
+const eitherService = await listedTitles();
+console.log('Hulu ->', huluOnly.join(', '), '| + Netflix ->', eitherService.join(', '));
+if (eitherService.length <= huluOnly.length) {
+  problems.push('a second service in the Stream group did not widen the results');
+}
+await shot('21d-lists-platform-filter');
+
+// Across groups it narrows, same as every other pair.
+await platChip('buy', 'Apple TV').click();
+await page.waitForTimeout(500);
+const streamAndRent = await listedTitles();
+console.log('streamable, and rentable from Apple ->', streamAndRent.join(', '));
+if (streamAndRent.length >= eitherService.length) {
+  problems.push('adding a Rent/buy chip did not narrow a Stream selection');
+}
+for (const title of streamAndRent) {
+  if (!eitherService.includes(title)) problems.push(`${title} survived a filter it should not have`);
+}
+
+// The two groups read different buckets: a title you can only stream must not
+// answer a Rent/buy filter.
+await page.locator('.chip.clear-filters').click();
+await page.waitForTimeout(400);
+await platChip('buy', 'Google Play').click();
+await page.waitForTimeout(500);
+const purchasable = await listedTitles();
+console.log('buyable from Google Play ->', purchasable.join(', '));
+if (!purchasable.includes('Squid Game')) {
+  problems.push('a title with a purchase option is missing from the Rent/buy row');
+}
+if (purchasable.includes('Breaking Bad')) {
+  problems.push('a stream-only title answered a Rent/buy filter');
+}
+await page.locator('.chip.clear-filters').click();
+await page.waitForTimeout(400);
+
 /* ---- 11. genres tab ---- */
 const tabLabels = await page.locator('.tab span').allTextContents();
 console.log('tabs ->', tabLabels.join(' | '));

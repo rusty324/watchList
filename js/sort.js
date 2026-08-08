@@ -46,11 +46,23 @@ export const FILTER_GROUPS = {
   },
   // Options are built from the library at render time — see genreOptions().
   genre: { label: 'Genre', dynamic: true },
+  // Availability isn't on the item: it comes from a per-title, per-country
+  // lookup that js/providers.js keeps in a side index, passed in as
+  // `availability`. Options come from platformOptions() the same way.
+  stream: { label: 'Stream', dynamic: true, bucket: 'stream' },
+  buy: { label: 'Rent/buy', dynamic: true, bucket: 'buy' },
 };
 
 /** An empty selection per group: the "no filters" state. */
 export function emptyFilters() {
-  return { status: new Set(), type: new Set(), rating: new Set(), genre: new Set() };
+  return {
+    status: new Set(),
+    type: new Set(),
+    rating: new Set(),
+    genre: new Set(),
+    stream: new Set(),
+    buy: new Set(),
+  };
 }
 
 export function anyFilterActive(filters) {
@@ -75,21 +87,30 @@ export function genreOptions(items) {
     .map(([name, count]) => ({ name, count }));
 }
 
-function matchesGroup(item, groupKey, selected) {
+function matchesGroup(item, groupKey, selected, availability) {
   if (!selected?.size) return true; // an unset group doesn't constrain anything
   if (groupKey === 'genre') {
     return (item.genres || []).some((g) => selected.has(g));
   }
-  const options = FILTER_GROUPS[groupKey]?.options || {};
+
+  const group = FILTER_GROUPS[groupKey];
+  if (group?.bucket) {
+    // A title nobody has looked up yet matches no platform, which is the
+    // truthful answer: "not known to be there" is not "there".
+    const entry = availability?.get?.(`${item.type}:${item.id}`);
+    return (entry?.[group.bucket] || []).some((p) => selected.has(p.id));
+  }
+
+  const options = group?.options || {};
   for (const key of selected) {
     if (options[key]?.test(item)) return true;
   }
   return false;
 }
 
-export function matchesFilters(item, filters) {
+export function matchesFilters(item, filters, availability = null) {
   return Object.keys(FILTER_GROUPS).every((groupKey) =>
-    matchesGroup(item, groupKey, filters?.[groupKey])
+    matchesGroup(item, groupKey, filters?.[groupKey], availability)
   );
 }
 
@@ -192,7 +213,7 @@ function hasEpisodeProgress(item) {
 
 export function applyList(
   items,
-  { filters = null, sort = 'title', query = '', settings = null } = {}
+  { filters = null, sort = 'title', query = '', settings = null, availability = null } = {}
 ) {
   const active = filters || emptyFilters();
   const cmp = SORTS[sort]?.cmp || SORTS.title.cmp;
@@ -204,7 +225,7 @@ export function applyList(
 
   return trackedItems(items)
     .filter((i) => !hiddenByPreference(i, hide))
-    .filter((i) => matchesFilters(i, active))
+    .filter((i) => matchesFilters(i, active, availability))
     .filter((i) =>
       !q ||
       [i.title, i.originalTitle].filter(Boolean).some((t) => t.toLowerCase().includes(q))

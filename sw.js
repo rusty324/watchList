@@ -2,7 +2,7 @@
  * already have. API traffic is deliberately never cached here — TMDB/OMDb
  * responses are cached in IndexedDB by the app, where TTLs are enforced. */
 
-const VERSION = 'v4';
+const VERSION = 'v5';
 const CACHE = `watchlist-shell-${VERSION}`;
 
 const SHELL = [
@@ -16,6 +16,7 @@ const SHELL = [
   './js/idb.js',
   './js/tmdb.js',
   './js/omdb.js',
+  './js/providers.js',
   './js/anilist.js',
   './js/diagnostics.js',
   './js/genres.js',

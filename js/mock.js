@@ -263,10 +263,13 @@ const OMDB = {
 };
 
 /* Availability fixtures, chosen to exercise every rendering branch:
- *   Parasite       all four rows, and a provider in both `free` and `ads`
- *   Princess Bride rent/buy only — no way to stream it
- *   Breaking Bad   subscription streaming only
- *   Spirited Away  nothing at all, i.e. the empty state
+ *   Parasite        all four rows, and a provider in both `free` and `ads`
+ *   Princess Bride  rent/buy only — no way to stream it
+ *   Breaking Bad    subscription streaming only
+ *   Spirited Away   nothing at all, i.e. the empty state
+ *   Stranger Things the walkthrough never opens its sheet, so its availability
+ *                   can only reach the Lists tab's platform index through the
+ *                   backfill sweep — which is what makes that test meaningful
  */
 const PROVIDERS = {
   netflix: { provider_id: 8, provider_name: 'Netflix', logo_path: '/net.jpg', display_priority: 0 },
@@ -302,6 +305,11 @@ const WATCH = {
   },
   'tv:93405': {
     link: 'https://www.themoviedb.org/tv/93405/watch?locale=US',
+    flatrate: [PROVIDERS.netflix],
+    buy: [PROVIDERS.google],
+  },
+  'tv:66732': {
+    link: 'https://www.themoviedb.org/tv/66732/watch?locale=US',
     flatrate: [PROVIDERS.netflix],
     buy: [PROVIDERS.google],
   },

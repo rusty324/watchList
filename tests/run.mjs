@@ -58,6 +58,7 @@ const genres = await import('../js/genres.js');
 const anilist = await import('../js/anilist.js');
 const diag = await import('../js/diagnostics.js');
 const lp = await import('../js/longpress.js');
+const providers = await import('../js/providers.js');
 
 function resetStore() {
   for (const key of Object.keys(store.state.items)) delete store.state.items[key];
@@ -351,6 +352,102 @@ test('the genre group filters on any of the selected genres', () => {
   assert.deepEqual(pick(['Adventure']), ['The Princess Bride']);
   assert.deepEqual(pick(['Adventure', 'Drama']).sort(), ['Breaking Bad', 'The Princess Bride']);
   assert.deepEqual(pick(['Nonexistent']), []);
+});
+
+/* ---------- platform filters ---------- */
+
+/** As tmdb.normalizeProviders would hand them over. */
+const NETFLIX = { id: 8, name: 'Netflix' };
+const TUBI = { id: 73, name: 'Tubi TV' };
+const APPLE = { id: 2, name: 'Apple TV' };
+const GOOGLE = { id: 3, name: 'Google Play Movies' };
+
+test('availability collapses into the two buckets a filter can use', () => {
+  const entry = providers.compact({
+    region: 'US',
+    stream: [NETFLIX],
+    // Free and ad-supported are the same proposition as a subscription to
+    // someone picking something to watch, and Tubi can appear in both.
+    free: [TUBI, NETFLIX],
+    rent: [APPLE],
+    buy: [APPLE, GOOGLE],
+  });
+  assert.deepEqual(entry.stream.map((p) => p.name), ['Netflix', 'Tubi TV']);
+  assert.deepEqual(entry.buy.map((p) => p.name), ['Apple TV', 'Google Play Movies']);
+  // Ids are strings so they can key a filter Set and a chip's dataset alike.
+  assert.deepEqual(entry.stream.map((p) => p.id), ['8', '73']);
+});
+
+test('a title available nowhere still gets a well-formed entry', () => {
+  const entry = providers.compact({ region: 'US', stream: [], free: [], rent: [], buy: [] });
+  assert.deepEqual(entry.stream, []);
+  assert.deepEqual(entry.buy, []);
+});
+
+const AVAIL = new Map([
+  ['movie:1', providers.compact({ stream: [NETFLIX], rent: [APPLE] })],
+  ['movie:2', providers.compact({ stream: [TUBI] })],
+  ['tv:4', providers.compact({ stream: [NETFLIX], buy: [GOOGLE] })],
+  // Alien (movie:3) is deliberately absent: nobody has looked it up.
+]);
+
+test('platform options come from the library, most common first', () => {
+  const items = sortMod.trackedItems(LIST);
+  assert.deepEqual(
+    providers.platformOptions(items, 'stream', AVAIL).map((p) => `${p.name}:${p.count}`),
+    ['Netflix:2', 'Tubi TV:1']
+  );
+  assert.deepEqual(
+    providers.platformOptions(items, 'buy', AVAIL).map((p) => p.name),
+    ['Apple TV', 'Google Play Movies']
+  );
+  assert.deepEqual(providers.platformOptions(items, 'stream', new Map()), []);
+});
+
+test('platform filters widen within a group and narrow across groups', () => {
+  const pick = (groups) =>
+    titlesOf(sortMod.applyList(LIST, { filters: filters(groups), availability: AVAIL }));
+
+  assert.deepEqual(pick({ stream: ['8'] }).sort(), ['Breaking Bad', 'The Princess Bride']);
+  // Two services in the same group means either, not both.
+  assert.deepEqual(pick({ stream: ['8', '73'] }).sort(), [
+    'Breaking Bad',
+    'Parasite',
+    'The Princess Bride',
+  ]);
+  // Across groups it still narrows: on Netflix AND rentable from Apple.
+  assert.deepEqual(pick({ stream: ['8'], buy: ['2'] }), ['The Princess Bride']);
+  // And it composes with the ordinary groups.
+  assert.deepEqual(pick({ stream: ['8'], type: ['tv'] }), ['Breaking Bad']);
+});
+
+test('a title nobody has checked matches no platform', () => {
+  const pick = (groups) =>
+    titlesOf(sortMod.applyList(LIST, { filters: filters(groups), availability: AVAIL }));
+  // Alien is in the list and unrated for availability. "Not known to be on
+  // Netflix" must not read as "on Netflix".
+  assert.ok(!pick({ stream: ['8'] }).includes('Alien'));
+  assert.deepEqual(pick({ stream: ['999'] }), []);
+  // With no index at all, a platform filter empties the list rather than
+  // silently ignoring itself.
+  assert.deepEqual(titlesOf(sortMod.applyList(LIST, { filters: filters({ stream: ['8'] }) })), []);
+});
+
+test('an unselected platform group leaves the list alone', () => {
+  assert.equal(sortMod.applyList(LIST, { filters: filters({}), availability: AVAIL }).length, 4);
+  assert.equal(sortMod.applyList(LIST, { availability: new Map() }).length, 4);
+});
+
+test('a check is needed for missing entries and for stale ones', () => {
+  const items = sortMod.trackedItems(LIST);
+  const now = Date.now();
+  assert.deepEqual(providers.needsCheck(items, AVAIL, now).map((i) => i.title), ['Alien']);
+  assert.equal(providers.checkedCount(items, AVAIL), 3);
+
+  // Availability moves as licences do, so an old answer is worth redoing.
+  const eightDays = now + 8 * 24 * 60 * 60 * 1000;
+  assert.equal(providers.needsCheck(items, AVAIL, eightDays).length, 4);
+  assert.equal(providers.needsCheck(items, new Map(), now).length, 4);
 });
 
 test('the list filter box matches original titles too', () => {

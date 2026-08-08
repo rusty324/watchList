@@ -22,6 +22,7 @@ import {
 } from '../store.js';
 import { movieDetail, tvDetail, seasonDetail, personCredits, posterUrl } from '../tmdb.js';
 import { fetchScores } from '../omdb.js';
+import { recordAvailability } from '../providers.js';
 import { enrich, resolveToTmdb } from '../anilist.js';
 import {
   heroBlock,
@@ -94,6 +95,9 @@ export function openMovie(id, hint) {
       // Refresh whatever metadata we already had stored, without claiming this
       // as a user edit for sync purposes.
       if (getItem('movie', id)) upsertItem('movie', id, snapshot(meta), { touch: false });
+      // Free: this request already carried the availability the Lists tab's
+      // platform filters need, so opening anything tops the index up.
+      recordAvailability('movie', id, meta.providers);
 
       const rerenderTitle = () => api.setTitle(displayTitle(meta, getItem('movie', id)));
       rerenderTitle();
@@ -265,6 +269,7 @@ export function openTv(id, hint) {
       // progress — otherwise the first render divides by zero episodes.
       upsertItem('tv', id, snapshot(meta), { touch: false });
       persist('tv-meta');
+      recordAvailability('tv', id, meta.providers);
 
       const rerenderTitle = () => api.setTitle(displayTitle(meta, getItem('tv', id)));
       rerenderTitle();

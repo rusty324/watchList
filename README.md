@@ -90,6 +90,7 @@ js/
   idb.js                 TTL cache on IndexedDB
   tmdb.js                TMDB client + normalization
   omdb.js                IMDb / Rotten Tomatoes, with quota discipline
+  providers.js           per-region availability index for the platform filters
   sort.js                list filters and comparators
   recommend.js           recommendation scoring
   sync.js                Gist push/pull and the merge rule
@@ -130,10 +131,10 @@ hide is never a rating you can't undo.
 
 ### Filters that combine
 
-The Lists tab's filters are grouped — Status, Type, Rating and Genre — and
-several can be on at once. **Picks inside a group widen the results; picks
-across groups narrow them.** So Movies + TV + Liked means "liked films and
-shows", while Movies + Liked means "liked films".
+The Lists tab's filters are grouped — Status, Type, Rating, Genre, Stream and
+Rent/buy — and several can be on at once. **Picks inside a group widen the
+results; picks across groups narrow them.** So Movies + TV + Liked means "liked
+films and shows", while Movies + Liked means "liked films".
 
 Grouping is what makes multi-select work here at all: several of these exclude
 each other by construction (nothing is both Watched and Not watched, and a title
@@ -145,6 +146,34 @@ full catalog of 21 — a genre you own nothing in would only ever return nothing
 
 **"Not for me" titles are hidden by default.** Selecting the *Not for me* chip
 always reveals them, and Settings → Display can turn the hiding off entirely.
+
+### Filtering by platform
+
+Two of those groups — **Stream** and **Rent/buy** — filter by service: what in
+your library is on Netflix, what you'd have to buy. Subscription and free/ads
+collapse into Stream, since both mean watching it without paying for that title;
+rent and buy collapse into Rent/buy, since both are a transaction. As with
+genres, the chips only offer services your library is actually on.
+
+These cost something the other filters don't. Every other filter reads a field
+already on the title, but availability is a **separate lookup per title, per
+country**, and TMDB has no batch endpoint for it. So the app doesn't go and
+fetch a hundred of them the moment you open the Lists tab. Instead:
+
+- Opening any title records its availability for free — the sheet was fetching
+  it anyway for the Where to watch box.
+- A **Find where to watch** control under the filters fills in the rest, in
+  batches of 40, telling you how many are left.
+
+A title nobody has checked yet matches no platform, which is the truthful
+answer rather than a guess — if a filter comes back empty and something is still
+unchecked, the empty state says so.
+
+The index is device-local and keyed by country. It is deliberately **not** part
+of your synced data: availability is regional and changes as licences move, so
+syncing it would have one device overwrite another's answer with something
+neither of you chose, for a value that goes stale on its own anyway. Changing
+your region in Settings clears it.
 
 ### Search filters
 

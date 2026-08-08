@@ -13,10 +13,21 @@ import {
   genreOptions,
 } from '../sort.js';
 import { backfillScores, hasOmdbKey } from '../omdb.js';
+import {
+  loadIndex,
+  indexNow,
+  indexRegion,
+  needsCheck,
+  checkedCount,
+  platformOptions,
+  backfillAvailability,
+} from '../providers.js';
+import { hasTmdbKey } from '../tmdb.js';
 import { openItem } from './detail.js';
 import { openSettings } from './settings.js';
 
 const ui = { filters: emptyFilters(), sort: 'title', query: '' };
+let sweeping = false;
 
 export function renderLists(root) {
   clear(root);
@@ -27,14 +38,25 @@ export function renderLists(root) {
   /** One labelled, horizontally-scrolling row per group. */
   function buildFilters() {
     const rows = [];
+    const tracked = trackedItems(state.items);
 
     for (const [groupKey, group] of Object.entries(FILTER_GROUPS)) {
-      const options = group.dynamic
-        ? genreOptions(state.items).map((g) => [g.name, { label: g.name }])
-        : Object.entries(group.options);
+      let options;
+      if (group.bucket) {
+        options = platformOptions(tracked, group.bucket).map((p) => [p.id, { label: p.name }]);
+      } else if (group.dynamic) {
+        options = genreOptions(state.items).map((g) => [g.name, { label: g.name }]);
+      } else {
+        options = Object.entries(group.options);
+      }
 
-      // A genre row with nothing (or one thing) in it is just noise.
-      if (!options.length || (group.dynamic && options.length < 2)) continue;
+      // Rows that can't narrow anything are just noise. A lone genre chip is
+      // one of those — every tracked title carries it — but a lone platform
+      // chip is not, since plenty of titles stream nowhere. Platform rows also
+      // stay absent until the index exists, so nobody who never uses them pays
+      // six rows of height for four.
+      const floor = group.bucket ? 1 : group.dynamic ? 2 : 1;
+      if (options.length < floor) continue;
 
       rows.push(
         h(
@@ -84,7 +106,66 @@ export function renderLists(root) {
       'Clear filters'
     );
 
-    return h('div', { class: 'filters' }, rows, clearBtn);
+    return h('div', { class: 'filters' }, rows, availabilityNote(tracked), clearBtn);
+  }
+
+  /**
+   * The control that seeds and tops up the availability index.
+   *
+   * It exists because platform filtering can't be free the way the others are:
+   * every other filter reads a field already on the item, while availability is
+   * one TMDB request per title with no batch endpoint. Making that a deliberate
+   * tap — with the count in the label — is more honest than firing off a
+   * hundred requests the moment someone opens the Lists tab.
+   */
+  function availabilityNote(tracked) {
+    if (!tracked.length || !hasTmdbKey()) return null;
+
+    const missing = needsCheck(tracked).length;
+    const checked = checkedCount(tracked);
+    if (!missing) return null;
+
+    const label = checked
+      ? `Check ${missing} more`
+      : `Find where to watch (${tracked.length} title${tracked.length === 1 ? '' : 's'})`;
+
+    const button = h(
+      'button',
+      {
+        type: 'button',
+        class: 'chip avail-check',
+        disabled: sweeping,
+        onclick: async () => {
+          if (sweeping) return;
+          sweeping = true;
+          button.disabled = true;
+          button.textContent = 'Checking…';
+          try {
+            const { done } = await backfillAvailability(tracked, {
+              max: 40,
+              onProgress: (n, total) => {
+                button.textContent = `Checking ${n} of ${total}…`;
+              },
+            });
+            if (done) toast(`Checked ${done} title${done === 1 ? '' : 's'}`);
+          } finally {
+            sweeping = false;
+          }
+          refreshFilters();
+          draw(results);
+        },
+      },
+      label
+    );
+
+    return h(
+      'div',
+      { class: 'avail-note' },
+      button,
+      checked
+        ? h('span', {}, `${checked} of ${tracked.length} checked`)
+        : h('span', {}, `in ${indexRegion() || 'your region'}`)
+    );
   }
 
   function refreshFilters() {
@@ -94,6 +175,13 @@ export function renderLists(root) {
   }
 
   filterBlock = buildFilters();
+
+  // The index lives in IndexedDB and the first paint can't await it, so the
+  // platform rows arrive a frame later rather than blocking the whole tab.
+  loadIndex().then(() => {
+    refreshFilters();
+    draw(results);
+  });
 
   const sortSelect = h(
     'select',
@@ -143,8 +231,25 @@ export function renderLists(root) {
   draw(results);
 }
 
+/** Why an empty result is empty, when the reason isn't obvious from the chips. */
+function emptyReason() {
+  const platform = ui.filters.stream.size || ui.filters.buy.size;
+  const unchecked = platform ? needsCheck(trackedItems(state.items)).length : 0;
+  if (unchecked) {
+    return `No titles match this filter. ${unchecked} title${unchecked === 1 ? " hasn't" : "s haven't"} been checked for availability yet, and an unchecked title can't match a platform.`;
+  }
+  if (state.settings.hideDisliked && !ui.filters.rating.has('disliked')) {
+    return 'No titles match this filter. “Not for me” titles are hidden — the “Not for me” chip still shows them.';
+  }
+  return 'No titles match this filter.';
+}
+
 function draw(host) {
-  const items = applyList(state.items, { ...ui, settings: state.settings });
+  const items = applyList(state.items, {
+    ...ui,
+    settings: state.settings,
+    availability: indexNow(),
+  });
 
   if (!items.length) {
     fill(host,
@@ -152,10 +257,7 @@ function draw(host) {
         ? emptyState({
             iconName: 'bookmark',
             title: 'Nothing here',
-            body:
-              state.settings.hideDisliked && !ui.filters.rating.has('disliked')
-                ? 'No titles match this filter. “Not for me” titles are hidden — the “Not for me” chip still shows them.'
-                : 'No titles match this filter.',
+            body: emptyReason(),
           })
         : emptyState({
             iconName: 'bookmark',

@@ -16,6 +16,7 @@ import {
 import { checkboxAction } from './parts.js';
 import { validateKey, watchRegions, providersForRegion, resolveRegion } from '../tmdb.js';
 import { cacheClear } from '../idb.js';
+import { resetIndex } from '../providers.js';
 import { quota, quotaRemaining } from '../omdb.js';
 import { CHECKS, runChecks } from '../diagnostics.js';
 import * as sync from '../sync.js';
@@ -331,8 +332,11 @@ export function openSettings() {
           onchange: () => {
             setSetting('region', regionSelect.value);
             // Availability is baked into the cached detail payloads, so they
-            // have to go for a region change to take effect.
+            // have to go for a region change to take effect. The Lists tab's
+            // platform index is per-region and cached alongside them, so drop
+            // the loaded copy too or its chips would outlive their country.
             cacheClear();
+            resetIndex();
             loadProviderChips();
           },
         },

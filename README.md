@@ -9,6 +9,8 @@ site on GitHub Pages — no server, no accounts, no build step.
   TV. Anime is its own tile, sourced from AniList.
 - **Lists** — everything you've tracked, with filters that combine, eleven sort
   orders, and paging that keeps a four-figure library quick.
+- **Playlists** — named, hand-ordered sets of titles, rearranged by drag or by
+  button.
 - **Three verdicts** — *Liked it*, *One and done* ("glad I saw it, but never
   again"), and *Not for me*, which you can hide from view entirely. Press and
   hold any poster to set one, or to hide a title outright.
@@ -65,7 +67,8 @@ survives a lost phone and follows you between devices.
 
 Conflicts resolve **per title, newest edit wins** — rating a film on your phone
 and ticking off episodes on an iPad both survive; only edits to the same title
-race each other.
+race each other. Playlists resolve the same way but a whole playlist at a time,
+since an order has no element-wise merge.
 
 Whether or not you use sync, **Settings → Save backup** writes a JSON file you
 can restore later.
@@ -92,6 +95,7 @@ js/
   tmdb.js                TMDB client + normalization
   omdb.js                IMDb / Rotten Tomatoes, with quota discipline
   providers.js           per-region availability index for the platform filters
+  reorder.js             drag-a-row-by-its-handle, for playlist order
   sort.js                list filters and comparators
   recommend.js           recommendation scoring
   sync.js                Gist push/pull and the merge rule
@@ -246,6 +250,34 @@ shipped the Vibration API, so the feedback is visual. And it has **no keyboard
 equivalent** — a long-press can't have one — so it's an accelerator rather than
 a new capability; the detail sheet's rating row offers the same three verdicts
 to everyone.
+
+### Playlists
+
+A playlist is a handful of titles **in an order you choose** — a run to work
+through, a marathon, a set to show someone. The watchlist is one flat bag; this
+is the part where sequence matters.
+
+Open any film or show and use **Add to playlist** in its action row. Any title
+qualifies, watchlisted or not: a playlist of things you've already seen is as
+reasonable as one of things you haven't. The Lists tab's header has a button for
+the playlist index, and each playlist opens as its own screen.
+
+Reorder a row by **dragging its handle**, or with the **up/down buttons** beside
+it. The handle is why dragging never fights scrolling the page — a finger that
+lands anywhere else on the row still scrolls, exactly as before. The buttons
+aren't a fallback for weak pointers so much as the only path that works without
+one: a drag can't have a keyboard equivalent.
+
+**Marking a title watched leaves it where it is,** with a tick. A playlist is a
+record of what you assembled, not a queue that empties itself, so nothing
+disappears from under you — remove things when you mean to.
+
+Two notes on how they sync. Playlists merge **per playlist, whole**: unlike a
+title, where the newer edit only wins that title's fields, an ordered list
+reordered on two devices has no sensible element-wise merge, so the later edit
+takes all of it. And deleting one leaves a tombstone rather than removing the
+record, because otherwise the other device's copy would simply reappear on the
+next pull.
 
 ### Hiding a title
 

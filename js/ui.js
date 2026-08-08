@@ -67,6 +67,13 @@ const PATHS = {
   film: '<rect x="2" y="4" width="20" height="16" rx="2"/><path d="M7 4v16M17 4v16M2 12h20M2 8h5M2 16h5M17 8h5M17 16h5"/>',
   sparkle: '<path d="M12 3l1.9 5.6L19.5 10l-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.4L12 3Z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8L19 15Z"/>',
   refresh: '<path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/>',
+  'chevron-up': '<path d="m6 15 6-6 6 6"/>',
+  'chevron-down': '<path d="m6 9 6 6 6-6"/>',
+  // Three bars: the conventional grab affordance for a draggable row.
+  grip: '<path d="M4 7h16M4 12h16M4 17h16"/>',
+  queue: '<path d="M3 6h11M3 12h11M3 18h7"/><path d="M18 10v8M14 14h8"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  trash: '<path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13"/><path d="M10 11v6M14 11v6"/>',
 };
 
 export function icon(name, cls) {

@@ -286,6 +286,98 @@ svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; 
 .hidden-row .h-year { flex: 0 0 auto; color: var(--fg-faint); font-size: 12.5px; }
 .hidden-row .chip { padding: 5px 11px; font-size: 12.5px; }
 
+/* ---------- playlists ---------- */
+
+.pl-index { display: flex; flex-direction: column; gap: 10px; }
+.pl-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: var(--r-md);
+  background: var(--bg-elev);
+}
+.pl-thumbs { flex: 0 0 auto; display: flex; }
+/* Overlapped covers, so four fit in the width of about two. The ring is the
+ * card's own colour, which is what separates one cover from the next — without
+ * it a stack of artwork-less placeholders reads as a single grey block. */
+.pl-thumbs .poster {
+  flex: 0 0 34px;
+  width: 34px; height: 51px;
+  border-radius: 4px;
+  margin-right: -14px;
+  box-shadow: 0 0 0 2px var(--bg-elev);
+}
+.pl-thumbs .poster:last-child { margin-right: 0; }
+.pl-thumbs .poster .ph { font-size: 0; }  /* too small for a legible name */
+.pl-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.pl-name {
+  font-size: 15px; font-weight: 700;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.pl-count { font-size: 12.5px; color: var(--fg-faint); font-weight: 600; }
+.pl-arrow { flex: 0 0 auto; width: 18px; height: 18px; color: var(--fg-faint); }
+
+.pl-rows { display: flex; flex-direction: column; gap: 8px; }
+.pl-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px 6px 2px;
+  border-radius: var(--r-md);
+  background: var(--bg-elev);
+  /* Rows slide out of the way as one is dragged past them. */
+  transition: transform 0.16s var(--ease);
+}
+/* Killed mid-drag: the row under the finger must track it exactly, and the
+ * others should not animate while the whole list is re-measuring. */
+.pl-rows.reordering .pl-row { transition: none; }
+.pl-row.dragging {
+  position: relative;
+  z-index: 2;
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.36);
+  scale: 1.02;
+}
+.drag-handle {
+  flex: 0 0 34px;
+  height: 44px;                    /* a real target, not just the glyph */
+  display: grid; place-items: center;
+  color: var(--fg-faint);
+  cursor: grab;
+  touch-action: none;              /* or the browser claims the drag for a scroll */
+}
+.drag-handle svg { width: 18px; height: 18px; }
+.pl-row.dragging .drag-handle { cursor: grabbing; }
+
+.pl-open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+}
+.pl-open .poster { flex: 0 0 38px; width: 38px; height: 57px; border-radius: 5px; }
+.pl-open .poster .ph { font-size: 8.5px; padding: 4%; }
+.pl-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.pl-title {
+  font-size: 14px; font-weight: 650;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.pl-sub { font-size: 12px; color: var(--fg-faint); }
+.pl-tick { flex: 0 0 auto; color: var(--up); }
+.pl-tick svg { width: 16px; height: 16px; stroke-width: 3; }
+
+.pl-controls { flex: 0 0 auto; display: flex; }
+.pl-btn {
+  width: 32px; height: 40px;
+  display: grid; place-items: center;
+  color: var(--fg-dim);
+}
+.pl-btn svg { width: 17px; height: 17px; }
+.pl-btn[disabled] { opacity: 0.28; }
+.pl-btn.remove { color: var(--fg-faint); }
+
 .sortbar { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
 .sortbar label { font-size: 13px; color: var(--fg-dim); font-weight: 600; }
 .select {
@@ -405,15 +497,19 @@ svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; 
 
 /* Must be positioned everywhere it appears: the .ph fallback inside is
  * absolutely positioned and would otherwise escape to the nearest ancestor. */
-.poster { position: relative; }
-
-.tile .poster {
-  aspect-ratio: 2 / 3;
+/* Shared by every use of posterBox() — tiles, detail heroes, playlist rows.
+ * These lived under `.tile .poster` and were duplicated under `.hero .poster`,
+ * which meant the first use outside either (a playlist row) drew an unclipped
+ * placeholder spilling over its neighbour. Context now only sets the size. */
+.poster {
+  position: relative;
   border-radius: var(--r-md);
   overflow: hidden;
   background: var(--bg-sunk);
 }
-.tile .poster img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.poster img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+.tile .poster { aspect-ratio: 2 / 3; }
 
 /* Artwork fallback, used by tiles, detail heroes and circular avatars alike. */
 .poster .ph {
@@ -535,14 +631,7 @@ svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; 
 /* ---------- detail content ---------- */
 
 .hero { display: flex; gap: 14px; margin-bottom: 16px; }
-.hero .poster {
-  flex: 0 0 116px;
-  aspect-ratio: 2 / 3;
-  border-radius: var(--r-md);
-  overflow: hidden;
-  background: var(--bg-sunk);
-}
-.hero .poster img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.hero .poster { flex: 0 0 116px; aspect-ratio: 2 / 3; }
 .hero .info { flex: 1; min-width: 0; }
 .hero h1 { margin: 0; font-size: 21px; font-weight: 800; letter-spacing: -0.02em; line-height: 1.2; }
 .hero .alt-title { margin: 4px 0 0; font-size: 14px; color: var(--fg-dim); }
@@ -629,6 +718,10 @@ svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; 
   font-size: 15px; font-weight: 600;
   text-align: left;
 }
+/* An icon used directly in an action, rather than inside the .box a checkbox
+ * uses. Without this an inline SVG has no intrinsic size and fills the row. */
+.action > svg { flex: 0 0 20px; width: 20px; height: 20px; color: var(--fg-dim); }
+.action[aria-pressed="true"] > svg { color: var(--accent); }
 .action .box {
   flex: 0 0 22px; height: 22px;
   border: 2px solid var(--fg-faint);

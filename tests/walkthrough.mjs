@@ -90,6 +90,17 @@ for (const b of btnBoxes) {
   }
 }
 
+// An inline SVG with no CSS size fills its container instead of sitting in the
+// row — invisible to every other assertion here, so it gets its own.
+const looseGlyphs = await page.locator('.sheet-body svg').evaluateAll((els) =>
+  els
+    .map((el) => ({ cls: el.parentElement?.className || '?', box: el.getBoundingClientRect() }))
+    .filter((g) => g.box.width > 40 || g.box.height > 40)
+    .map((g) => `${g.cls}:${Math.round(g.box.width)}x${Math.round(g.box.height)}`)
+);
+console.log('oversized glyphs on the sheet ->', looseGlyphs.length ? looseGlyphs.join(', ') : 'none');
+for (const glyph of looseGlyphs) problems.push(`an unconstrained icon on the detail sheet: ${glyph}`);
+
 /* ---- where to watch ---- */
 const rowNames = async (row) =>
   page.locator(`.prov-row[data-row="${row}"] .p-name`).allTextContents();
@@ -827,6 +838,137 @@ await page.waitForTimeout(900);
 const afterUnhide = await listedNow();
 console.log('lists after un-hiding ->', afterUnhide.join(', '));
 if (!afterUnhide.includes(victim)) problems.push('un-hiding did not bring the title back');
+
+/* ---- 10d. playlists: build one, then rearrange it ---- */
+
+// prompt() is how a playlist gets named; answer it rather than let it hang.
+let promptReply = 'Movie night';
+page.on('dialog', (d) => d.accept(d.type() === 'prompt' ? promptReply : undefined));
+
+const addToPlaylist = async (query, { fresh = false } = {}) => {
+  await page.click('.tab[data-tab="browse"]');
+  await page.waitForTimeout(600);
+  await page.fill('input[type="search"]', query);
+  await page.waitForTimeout(900);
+  await page.click('.grid .tile');
+  await page.waitForTimeout(1100);
+
+  await page.locator('.action-row .action', { hasText: /playlist|^In / }).first().click();
+  await page.waitForTimeout(800);
+  if (fresh) {
+    await page.locator('.sheet-body button', { hasText: 'New playlist with this title' }).click();
+  } else {
+    await page.locator('.sheet-body .action', { hasText: promptReply }).click();
+  }
+  await page.waitForTimeout(600);
+  await page.goBack(); // the picker
+  await page.waitForTimeout(500);
+  await page.goBack(); // the detail sheet
+  await page.waitForTimeout(700);
+};
+
+await addToPlaylist('para', { fresh: true });
+await addToPlaylist('breaking');
+await addToPlaylist('princess');
+
+await page.click('.tab[data-tab="lists"]');
+await page.waitForTimeout(700);
+await page.click('.icon-btn[aria-label="Playlists"]');
+await page.waitForTimeout(900);
+
+const cardNames = await page.locator('.pl-card .pl-name').allTextContents();
+const cardCounts = await page.locator('.pl-card .pl-count').allTextContents();
+console.log('playlist index ->', cardNames.join(', '), '|', cardCounts.join(', '));
+if (!cardNames.includes('Movie night')) problems.push('the new playlist is not on the index');
+if (!cardCounts.some((c) => c.startsWith('3'))) {
+  problems.push(`the playlist should hold 3 titles: ${cardCounts.join('|')}`);
+}
+await shot('35-playlist-index');
+
+await page.locator('.pl-card', { hasText: 'Movie night' }).click();
+await page.waitForTimeout(900);
+const plOrder = () => page.locator('.pl-row .pl-title').allTextContents();
+const built = await plOrder();
+console.log('as built ->', built.join(' | '));
+if (built.length !== 3) problems.push(`expected 3 rows, found ${built.length}`);
+await shot('36-playlist');
+
+// Drag the last row to the top by its handle.
+{
+  const first = await page.locator('.pl-row').first().boundingBox();
+  const handle = await page.locator('.pl-row').last().locator('.drag-handle').boundingBox();
+  await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(handle.x + handle.width / 2, first.y + 6, { steps: 12 });
+  await page.waitForTimeout(250);
+  await page.mouse.up();
+  await page.waitForTimeout(800);
+}
+const dragged = await plOrder();
+console.log('after dragging the last row to the top ->', dragged.join(' | '));
+if (dragged[0] !== built[2]) {
+  problems.push(`dragging did not move the row to the top: ${dragged.join('|')}`);
+}
+if ([...dragged].sort().join('|') !== [...built].sort().join('|')) {
+  problems.push('reordering changed which titles are in the playlist');
+}
+
+// The buttons are the accessible path and must agree with the drag.
+await page.locator('.pl-row').nth(2).locator('.pl-btn[aria-label^="Move"]').first().click();
+await page.waitForTimeout(600);
+const nudged = await plOrder();
+console.log('after the up button ->', nudged.join(' | '));
+if (nudged[1] !== dragged[2] || nudged[2] !== dragged[1]) {
+  problems.push(`the up button did not swap rows 2 and 3: ${nudged.join('|')}`);
+}
+// Move-up on the first row and move-down on the last have nothing to do.
+if (!(await page.locator('.pl-row').first().locator('.pl-btn').first().isDisabled())) {
+  problems.push('move-up is enabled on the first row');
+}
+
+// The order is what has to survive a reload, not just the membership.
+await page.reload({ waitUntil: 'networkidle' });
+await page.waitForTimeout(1400);
+const reloaded = await plOrder();
+console.log('after a reload ->', reloaded.join(' | '));
+if (reloaded.join('|') !== nudged.join('|')) {
+  problems.push(`the order did not persist: ${reloaded.join('|')} vs ${nudged.join('|')}`);
+}
+
+// Watching something leaves it in place, with a tick — it does not drop out.
+await page.locator('.pl-row .pl-open').first().click();
+await page.waitForTimeout(1200);
+await page.locator('.action-row .action', { hasText: 'Watched' }).first().click();
+await page.waitForTimeout(400);
+await page.goBack();
+await page.waitForTimeout(900);
+const afterWatch = await plOrder();
+console.log('after marking the top one watched ->', afterWatch.join(' | '));
+if (afterWatch.join('|') !== reloaded.join('|')) {
+  problems.push('marking a title watched changed the playlist');
+}
+if (!(await page.locator('.pl-row').first().locator('.pl-tick').count())) {
+  problems.push('a watched row is not showing its tick');
+}
+await shot('36a-playlist-watched');
+
+// Removing a title, and deleting the playlist, both stick.
+await page.locator('.pl-row').first().locator('.pl-btn.remove').click();
+await page.waitForTimeout(700);
+if ((await plOrder()).length !== 2) problems.push('removing a row did not shorten the playlist');
+
+await page.locator('button', { hasText: 'Delete playlist' }).click();
+await page.waitForTimeout(1000);
+if (await page.locator('.pl-card').count()) {
+  problems.push('the deleted playlist is still on the index');
+}
+await page.reload({ waitUntil: 'networkidle' });
+await page.waitForTimeout(1200);
+if (await page.locator('.pl-card').count()) {
+  problems.push('the deleted playlist came back after a reload');
+}
+await page.click('.tab[data-tab="lists"]');
+await page.waitForTimeout(700);
 
 /* ---- 11. genres tab ---- */
 const tabLabels = await page.locator('.tab span').allTextContents();

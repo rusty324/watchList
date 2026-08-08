@@ -29,6 +29,7 @@ import {
 import { hasTmdbKey } from '../tmdb.js';
 import { openItem } from './detail.js';
 import { openSettings } from './settings.js';
+import { renderPlaylists } from './playlists.js';
 
 const ui = { filters: emptyFilters(), sort: 'title', query: '', page: 1 };
 let sweeping = false;
@@ -41,7 +42,11 @@ function resetPage() {
   ui.page = 1;
 }
 
-export function renderLists(root) {
+export function renderLists(root, segments) {
+  // Playlists live under this tab as sub-routes, the way genres do under
+  // theirs, so opening one is a history entry the back gesture understands.
+  if (segments?.length) return renderPlaylists(root, segments);
+
   clear(root);
 
   const results = h('div', {});
@@ -240,6 +245,7 @@ export function renderLists(root) {
       'div',
       { style: 'display:flex;align-items:center;gap:10px' },
       h('h1', { class: 'page-title', style: 'flex:1;margin-bottom:12px' }, 'Lists'),
+      h('a', { class: 'icon-btn', href: '#/lists/playlists', 'aria-label': 'Playlists' }, icon('queue')),
       h(
         'button',
         { type: 'button', class: 'icon-btn', 'aria-label': 'Settings', onclick: () => openSettings() },

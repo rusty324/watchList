@@ -59,9 +59,12 @@ const anilist = await import('../js/anilist.js');
 const diag = await import('../js/diagnostics.js');
 const lp = await import('../js/longpress.js');
 const providers = await import('../js/providers.js');
+const reorder = await import('../js/reorder.js');
 
 function resetStore() {
   for (const key of Object.keys(store.state.items)) delete store.state.items[key];
+  // Playlists too, or they accumulate across tests and counts drift.
+  for (const key of Object.keys(store.state.playlists)) delete store.state.playlists[key];
   store.state.settings.defaultTitleLang = 'en';
 }
 
@@ -530,6 +533,130 @@ test('un-hiding keeps a title that has other state attached', () => {
   // The rating outlives the hide — only records holding nothing else get pruned.
   assert.equal(store.getItem('movie', 550).rating, 'up');
   assert.equal(store.getItem('movie', 550).hidden, false);
+});
+
+/* ---------- playlists ---------- */
+
+test('moveItem shifts one entry and leaves the rest in order', () => {
+  const list = ['a', 'b', 'c', 'd'];
+  assert.deepEqual(reorder.moveItem(list, 3, 0), ['d', 'a', 'b', 'c']);
+  assert.deepEqual(reorder.moveItem(list, 0, 3), ['b', 'c', 'd', 'a']);
+  assert.deepEqual(reorder.moveItem(list, 1, 2), ['a', 'c', 'b', 'd']);
+  // Moving something to where it already is changes nothing.
+  assert.deepEqual(reorder.moveItem(list, 2, 2), list);
+  // The original is never touched.
+  assert.deepEqual(list, ['a', 'b', 'c', 'd']);
+});
+
+test('moveItem survives the indices the end-of-list buttons produce', () => {
+  const list = ['a', 'b', 'c'];
+  // "Move up" on the first row and "move down" on the last are disabled in the
+  // UI, but the arithmetic must not corrupt the list if one ever gets through.
+  assert.deepEqual(reorder.moveItem(list, 0, -1), ['a', 'b', 'c']);
+  assert.deepEqual(reorder.moveItem(list, 2, 3), ['a', 'b', 'c']);
+  assert.deepEqual(reorder.moveItem(list, 9, 0), ['a', 'b', 'c']);
+  assert.deepEqual(reorder.moveItem(list, -1, 0), ['a', 'b', 'c']);
+
+  // Whatever happens, nothing is lost or duplicated.
+  for (const [from, to] of [[0, 2], [2, 0], [1, 1], [0, 99], [-3, 1]]) {
+    const out = reorder.moveItem(list, from, to);
+    assert.equal(out.length, list.length);
+    assert.deepEqual([...out].sort(), ['a', 'b', 'c']);
+  }
+});
+
+test('dropIndex picks the slot by row midpoints', () => {
+  // Three 50px rows starting at y=100.
+  const rects = [
+    { top: 100, height: 50 },
+    { top: 150, height: 50 },
+    { top: 200, height: 50 },
+  ];
+  assert.equal(reorder.dropIndex(0, rects), 0); // above everything
+  assert.equal(reorder.dropIndex(120, rects), 0);
+  // Past the midpoint of row 0, so row 1's slot — swapping at halfway is what
+  // keeps a drag from feeling stuck.
+  assert.equal(reorder.dropIndex(130, rects), 1);
+  assert.equal(reorder.dropIndex(230, rects), 2);
+  assert.equal(reorder.dropIndex(9999, rects), 2); // below everything
+  assert.equal(reorder.dropIndex(50, []), 0);
+});
+
+test('a playlist holds an order, and adding the same title twice is a no-op', () => {
+  resetStore();
+  const pl = store.createPlaylist('Movie night');
+  assert.equal(pl.name, 'Movie night');
+  assert.deepEqual(pl.items, []);
+
+  store.addToPlaylist(pl.id, 'movie:1', { type: 'movie', id: 1, title: 'One' });
+  store.addToPlaylist(pl.id, 'tv:2', { type: 'tv', id: 2, title: 'Two' });
+  store.addToPlaylist(pl.id, 'movie:1');
+  assert.deepEqual(store.getPlaylist(pl.id).items, ['movie:1', 'tv:2']);
+
+  // The metadata comes along so a row has something to draw for a title that
+  // carries no rating or watch mark of its own.
+  assert.equal(store.getItem('movie', 1).title, 'One');
+
+  store.setPlaylistOrder(pl.id, ['tv:2', 'movie:1']);
+  assert.deepEqual(store.getPlaylist(pl.id).items, ['tv:2', 'movie:1']);
+
+  store.removeFromPlaylist(pl.id, 'tv:2');
+  assert.deepEqual(store.getPlaylist(pl.id).items, ['movie:1']);
+});
+
+test('a title held only by a playlist survives a prune', () => {
+  resetStore();
+  const pl = store.createPlaylist('Keep me');
+  store.addToPlaylist(pl.id, 'movie:7', { type: 'movie', id: 7, title: 'Held' });
+  // Nothing rated, nothing watched — isTracked alone would drop it, and the row
+  // would then render with no title and no poster.
+  assert.equal(store.isTracked(store.getItem('movie', 7)), false);
+  assert.equal(store.pruneUntracked(), 0);
+  assert.equal(store.getItem('movie', 7).title, 'Held');
+
+  // Once it leaves the playlist nothing is holding it, and it goes.
+  store.removeFromPlaylist(pl.id, 'movie:7');
+  assert.equal(store.pruneUntracked(), 1);
+  assert.equal(store.getItem('movie', 7), null);
+});
+
+test('deleting a playlist leaves a tombstone rather than a hole', () => {
+  resetStore();
+  const pl = store.createPlaylist('Temporary');
+  store.addToPlaylist(pl.id, 'movie:1', { type: 'movie', id: 1, title: 'One' });
+  assert.equal(store.livePlaylists().length, 1);
+
+  store.deletePlaylist(pl.id);
+  assert.equal(store.livePlaylists().length, 0);
+  assert.equal(store.getPlaylist(pl.id), null);
+  // The record stays, carrying the delete, so a merge can see it happened.
+  assert.ok(store.state.playlists[pl.id].deletedAt);
+});
+
+test('playlistsContaining finds every list a title is in', () => {
+  resetStore();
+  const a = store.createPlaylist('A');
+  const b = store.createPlaylist('B');
+  store.addToPlaylist(a.id, 'movie:1', { type: 'movie', id: 1, title: 'One' });
+  store.addToPlaylist(b.id, 'movie:1');
+  assert.deepEqual(store.playlistsContaining('movie:1').map((p) => p.name).sort(), ['A', 'B']);
+  assert.deepEqual(store.playlistsContaining('movie:404'), []);
+});
+
+test('restoring a backup carries playlists, and does not merge them in', () => {
+  resetStore();
+  const pl = store.createPlaylist('Before');
+  store.addToPlaylist(pl.id, 'movie:1', { type: 'movie', id: 1, title: 'One' });
+
+  const exported = JSON.parse(store.exportData());
+  assert.equal(Object.keys(exported.playlists).length, 1);
+
+  store.replaceData({ items: {}, playlists: {}, settings: store.state.settings });
+  assert.deepEqual(store.livePlaylists(), []);
+
+  // ...and back again.
+  store.replaceData(exported);
+  assert.deepEqual(store.livePlaylists().map((p) => p.name), ['Before']);
 });
 
 /* ---------- paging ---------- */
@@ -1073,6 +1200,68 @@ test('background score fetches survive losing an edit race', () => {
   );
   assert.equal(merged.items['movie:1'].rating, 'down');
   assert.equal(merged.items['movie:1'].scores.imdb, 8.5);
+});
+
+test('playlists survive a sync rather than being dropped', () => {
+  // mergeData builds a fresh object, so anything it doesn't name explicitly is
+  // lost on every pull. This is the guard for that.
+  const merged = sync.mergeData(
+    { items: {}, playlists: { a: { id: 'a', name: 'Mine', items: ['movie:1'], updatedAt: 10 } } },
+    { items: {}, playlists: { b: { id: 'b', name: 'Theirs', items: ['tv:2'], updatedAt: 20 } } }
+  );
+  assert.deepEqual(Object.keys(merged.playlists).sort(), ['a', 'b']);
+});
+
+test('the newer edit takes the whole playlist', () => {
+  // An ordered array reordered on two devices has no sensible element-wise
+  // merge, so the unit is the whole playlist.
+  const local = { id: 'a', name: 'A', items: ['x', 'y', 'z'], updatedAt: 200 };
+  const remote = { id: 'a', name: 'A', items: ['z', 'y', 'x'], updatedAt: 100 };
+
+  assert.deepEqual(
+    sync.mergeData({ items: {}, playlists: { a: local } }, { items: {}, playlists: { a: remote } })
+      .playlists.a.items,
+    ['x', 'y', 'z']
+  );
+  // ...and the other way round, so it really is the timestamp deciding.
+  assert.deepEqual(
+    sync.mergeData(
+      { items: {}, playlists: { a: { ...local, updatedAt: 50 } } },
+      { items: {}, playlists: { a: remote } }
+    ).playlists.a.items,
+    ['z', 'y', 'x']
+  );
+});
+
+test('a deleted playlist does not come back from the other device', () => {
+  // The whole reason deletion is a tombstone: the remote still holds its copy,
+  // and without a record of the delete the merge would treat it as news.
+  const deleted = { id: 'a', name: 'Gone', items: [], updatedAt: 300, deletedAt: 300 };
+  const stale = { id: 'a', name: 'Gone', items: ['movie:1'], updatedAt: 100 };
+
+  const merged = sync.mergeData(
+    { items: {}, playlists: { a: deleted } },
+    { items: {}, playlists: { a: stale } }
+  );
+  assert.ok(merged.playlists.a.deletedAt, 'the delete was undone by a stale copy');
+
+  // And a delete arriving from the remote wins over an older local copy too.
+  const other = sync.mergeData(
+    { items: {}, playlists: { a: stale } },
+    { items: {}, playlists: { a: deleted } }
+  );
+  assert.ok(other.playlists.a.deletedAt);
+});
+
+test('a playlist edit counts as recent activity for the settings tiebreak', () => {
+  // newestEdit decides which side's settings win. Before playlists it only
+  // looked at items, so a device that had only touched playlists would look
+  // untouched and lose its settings.
+  const merged = sync.mergeData(
+    { items: {}, playlists: { a: { id: 'a', items: [], updatedAt: 900 } }, settings: { region: 'GB' } },
+    { items: { 'movie:1': { updatedAt: 100 } }, settings: { region: 'US' } }
+  );
+  assert.equal(merged.settings.region, 'GB');
 });
 
 /* ---------- omdb parsing ---------- */

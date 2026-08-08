@@ -12,8 +12,8 @@
 import { state, itemKey } from './store.js';
 import { recommendationsFor } from './tmdb.js';
 
-const MAX_SEEDS = 20;
-const RANK_WINDOW = 20;
+const MAX_SEEDS = 40;
+const RANK_WINDOW = 40;
 const AFFINITY_WEIGHT = 0.3;
 
 /**

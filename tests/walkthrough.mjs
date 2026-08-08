@@ -325,6 +325,10 @@ await shot('13-browse-recommendations');
 /* ---- 9. lists ---- */
 await page.click('.tab[data-tab="lists"]');
 await page.waitForTimeout(600);
+// Six fixture titles fit on one page, so the pager must stay out of the way.
+if (await page.locator('.pager').count()) {
+  problems.push('a pager appeared for a list that fits on one page');
+}
 await shot('14-lists-title');
 
 await page.selectOption('.sortbar select', 'genre');
@@ -992,6 +996,135 @@ await lp.waitForTimeout(900);
 await lp.click('.rating-btn.once');
 await lp.waitForTimeout(250);
 await lp.screenshot({ path: `${OUT}/30-light-tv.png` });
+await light.close();
+
+/* ---- 12. paging a large library ----
+ *
+ * Last, and in its own context: it seeds a synthetic library over localStorage,
+ * which would invalidate every assertion before it. The fixtures hold six
+ * titles, which is the case where the pager must NOT appear — a library big
+ * enough to page is only reachable by writing one. */
+const bulk = await browser.newContext({
+  viewport: { width: 390, height: 844 },
+  deviceScaleFactor: 2,
+  isMobile: true,
+  hasTouch: true,
+  colorScheme: 'dark',
+});
+const bp = await bulk.newPage();
+bp.on('pageerror', (e) => problems.push(`pageerror(bulk): ${e.message}`));
+bp.on('console', (m) => {
+  if (m.type() === 'error') problems.push(`console(bulk): ${m.text()}`);
+});
+
+await bp.goto(BASE, { waitUntil: 'networkidle' });
+const TOTAL = 120;
+await bp.evaluate((n) => {
+  const genres = ['Drama', 'Comedy', 'Thriller', 'Action'];
+  const items = {};
+  for (let i = 0; i < n; i++) {
+    const type = i % 3 === 0 ? 'tv' : 'movie';
+    items[`${type}:${900000 + i}`] = {
+      type,
+      id: 900000 + i,
+      // Zero-padded so title order and index order agree, which is what lets
+      // the page-boundary assertions below be exact.
+      title: `Synthetic ${String(i).padStart(4, '0')}`,
+      year: 1960 + (i % 60),
+      poster: null,
+      genres: [genres[i % genres.length]],
+      rating: i % 7 === 0 ? 'up' : null,
+      watched: true,
+      inWatchlist: false,
+      seasons: {},
+      updatedAt: i,
+    };
+  }
+  localStorage.setItem(
+    'wl.data.v1',
+    JSON.stringify({
+      version: 2,
+      items,
+      settings: { defaultTitleLang: 'en', theme: 'auto', hideDisliked: true, region: 'US', myProviders: [] },
+    })
+  );
+}, TOTAL);
+
+await bp.reload({ waitUntil: 'networkidle' });
+await bp.waitForTimeout(500);
+await bp.click('.tab[data-tab="lists"]');
+await bp.waitForTimeout(1200);
+
+const bulkNames = () => bp.locator('.grid .tile .t-name').allTextContents();
+const bulkCount = () => bp.locator('.grid .tile').count();
+
+const firstPage = await bulkNames();
+console.log(
+  'page 1 ->', firstPage.length, 'tiles,',
+  await bp.locator('.section-sub').first().textContent(),
+  '| pages:', await bp.locator('.pager').getAttribute('data-pages')
+);
+if (firstPage.length !== 50) {
+  problems.push(`page 1 rendered ${firstPage.length} tiles, expected 50`);
+}
+// The point of the whole change: the DOM must not carry the whole library.
+if ((await bulkCount()) > 50) problems.push('more than a page of tiles reached the DOM');
+if ((await bp.locator('.pager').getAttribute('data-pages')) !== '3') {
+  problems.push('120 titles did not come to 3 pages of 50');
+}
+if (firstPage[0] !== 'Synthetic 0000') {
+  problems.push(`page 1 does not start at the top of the sort: ${firstPage[0]}`);
+}
+await bp.screenshot({ path: `${OUT}/31-lists-paged.png` });
+
+await bp.click('.pager .page-step[aria-label="Next page"]');
+await bp.waitForTimeout(800);
+const secondPage = await bulkNames();
+console.log('page 2 ->', secondPage.length, 'tiles, first:', secondPage[0]);
+// Sorting happens over the library and slicing after it, so page 2 continues
+// the alphabet rather than restarting it.
+if (secondPage[0] !== 'Synthetic 0050') {
+  problems.push(`page 2 did not continue the sort: starts at ${secondPage[0]}`);
+}
+if (secondPage.some((t) => firstPage.includes(t))) {
+  problems.push('a title appeared on two pages');
+}
+if ((await bp.evaluate(() => window.scrollY)) !== 0) {
+  problems.push('turning the page left the old scroll position');
+}
+
+// The last page is the remainder, and Next is spent.
+await bp.click('.pager .page-step[aria-label="Next page"]');
+await bp.waitForTimeout(800);
+const lastPage = await bulkNames();
+console.log('page 3 ->', lastPage.length, 'tiles, last:', lastPage.at(-1));
+if (lastPage.length !== 20) problems.push(`last page rendered ${lastPage.length} tiles, expected 20`);
+if (!(await bp.locator('.pager .page-step[aria-label="Next page"]').isDisabled())) {
+  problems.push('Next is still enabled on the last page');
+}
+
+// Filtering from page 3 must not strand you past the end of a shorter list.
+await bp.locator('.filter-row[data-group="rating"] .chip', { hasText: 'Liked' }).click();
+await bp.waitForTimeout(800);
+const filtered = await bulkNames();
+console.log('liked, from page 3 ->', filtered.length, 'tiles;', await bp.locator('.pager').count(), 'pager');
+if (!filtered.length) {
+  problems.push('narrowing the filter while on a later page left an empty grid');
+}
+if (await bp.locator('.pager').count()) {
+  problems.push('a single page of results still drew a pager');
+}
+
+// And the picker jumps straight to a page rather than stepping.
+await bp.locator('.chip.clear-filters').click();
+await bp.waitForTimeout(700);
+await bp.selectOption('.pager .page-pick', '3');
+await bp.waitForTimeout(800);
+console.log('jumped to ->', await bp.locator('.section-sub').first().textContent());
+if ((await bp.locator('.pager').getAttribute('data-page')) !== '3') {
+  problems.push('the page picker did not jump to the chosen page');
+}
+await bp.screenshot({ path: `${OUT}/32-lists-last-page.png` });
 
 await browser.close();
 

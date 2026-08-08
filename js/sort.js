@@ -233,6 +233,43 @@ export function applyList(
     .sort(cmp);
 }
 
+/* ---------- paging ---------- */
+
+/**
+ * Why the Lists tab pages at all.
+ *
+ * Filtering and sorting a four-figure library costs about 3ms — it is building
+ * the tiles that hurts. Each one is a handful of elements plus a press-and-hold
+ * listener, and the browser then has to lay them all out: measured on a
+ * phone-speed CPU, 660 tiles took ~400ms per redraw against ~37ms for 50. That
+ * redraw runs on every keystroke and every chip tap, so the fix is to stop
+ * building tiles nobody is looking at rather than to make the tiles cheaper.
+ */
+export const PAGE_SIZE = 50;
+
+export function pageCount(total, size = PAGE_SIZE) {
+  return Math.max(1, Math.ceil(total / size));
+}
+
+/** Pages are 1-based, and clamped: a filter can shrink the list under you. */
+export function clampPage(page, total, size = PAGE_SIZE) {
+  const n = Number(page);
+  if (!Number.isFinite(n)) return 1;
+  return Math.min(Math.max(1, Math.floor(n)), pageCount(total, size));
+}
+
+export function pageSlice(items, page, size = PAGE_SIZE) {
+  const start = (clampPage(page, items.length, size) - 1) * size;
+  return items.slice(start, start + size);
+}
+
+/** "1–50 of 660" — the inclusive, 1-based range this page covers. */
+export function pageRange(page, total, size = PAGE_SIZE) {
+  if (!total) return { from: 0, to: 0 };
+  const start = (clampPage(page, total, size) - 1) * size;
+  return { from: start + 1, to: Math.min(start + size, total) };
+}
+
 /* ---------- search results ---------- */
 
 /**

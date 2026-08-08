@@ -1,6 +1,6 @@
 /* Lists tab: everything you've tracked, filtered and sorted. */
 
-import { h, icon, clear, fill, tile, emptyState, toast } from '../ui.js';
+import { h, icon, clear, fill, tile, emptyState, toast, scrollToTop } from '../ui.js';
 import { state, getItem } from '../store.js';
 import {
   FILTER_GROUPS,
@@ -11,6 +11,10 @@ import {
   emptyFilters,
   anyFilterActive,
   genreOptions,
+  pageCount,
+  clampPage,
+  pageSlice,
+  pageRange,
 } from '../sort.js';
 import { backfillScores, hasOmdbKey } from '../omdb.js';
 import {
@@ -26,8 +30,13 @@ import { hasTmdbKey } from '../tmdb.js';
 import { openItem } from './detail.js';
 import { openSettings } from './settings.js';
 
-const ui = { filters: emptyFilters(), sort: 'title', query: '' };
+const ui = { filters: emptyFilters(), sort: 'title', query: '', page: 1 };
 let sweeping = false;
+
+/** Anything that changes which titles match has to send you back to page 1. */
+function resetPage() {
+  ui.page = 1;
+}
 
 export function renderLists(root) {
   clear(root);
@@ -79,6 +88,7 @@ export function renderLists(root) {
                     if (set.has(key)) set.delete(key);
                     else set.add(key);
                     event.currentTarget.setAttribute('aria-pressed', String(set.has(key)));
+                    resetPage();
                     refreshFilters();
                     draw(results);
                   },
@@ -99,6 +109,7 @@ export function renderLists(root) {
         hidden: !anyFilterActive(ui.filters),
         onclick: () => {
           ui.filters = emptyFilters();
+          resetPage();
           refreshFilters();
           draw(results);
         },
@@ -190,6 +201,7 @@ export function renderLists(root) {
       'aria-label': 'Sort by',
       onchange: () => {
         ui.sort = sortSelect.value;
+        resetPage();
         draw(results);
       },
     },
@@ -206,9 +218,16 @@ export function renderLists(root) {
     value: ui.query,
     'aria-label': 'Filter your list',
   });
+  // Debounced: a redraw rebuilds every tile on the page, and firing that on
+  // each keystroke was the single slowest thing about a large library.
+  let queryTimer = null;
   filterInput.addEventListener('input', () => {
     ui.query = filterInput.value;
-    draw(results);
+    clearTimeout(queryTimer);
+    queryTimer = setTimeout(() => {
+      resetPage();
+      draw(results);
+    }, 180);
   });
 
   root.append(
@@ -244,6 +263,57 @@ function emptyReason() {
   return 'No titles match this filter.';
 }
 
+/**
+ * Previous / page picker / Next.
+ *
+ * The picker is a select rather than a row of numbers because a four-figure
+ * library runs to twenty-odd pages, which is more than fits across a phone —
+ * and stepping to page 14 with a Next button is nobody's idea of a good time.
+ */
+function pager(host, total, pages) {
+  if (pages < 2) return null;
+
+  const go = (page) => {
+    ui.page = clampPage(page, total);
+    draw(host);
+    // A new page under your thumb with the old scroll position is disorienting.
+    scrollToTop({ smooth: false });
+  };
+
+  const step = (label, iconName, delta, disabled) =>
+    h(
+      'button',
+      {
+        type: 'button',
+        class: 'page-step',
+        'aria-label': label,
+        disabled,
+        onclick: () => go(ui.page + delta),
+      },
+      icon(iconName)
+    );
+
+  const picker = h(
+    'select',
+    {
+      class: 'select page-pick',
+      'aria-label': `Page ${ui.page} of ${pages}`,
+      onchange: () => go(Number(picker.value)),
+    },
+    Array.from({ length: pages }, (_, i) =>
+      h('option', { value: i + 1, selected: ui.page === i + 1 }, `Page ${i + 1} of ${pages}`)
+    )
+  );
+
+  return h(
+    'div',
+    { class: 'pager', dataset: { page: String(ui.page), pages: String(pages) } },
+    step('Previous page', 'back', -1, ui.page <= 1),
+    picker,
+    step('Next page', 'forward', 1, ui.page >= pages)
+  );
+}
+
 function draw(host) {
   const items = applyList(state.items, {
     ...ui,
@@ -268,29 +338,36 @@ function draw(host) {
     return;
   }
 
+  // A filter can shrink the list under a page you were already on.
+  ui.page = clampPage(ui.page, items.length);
+  const shown = pageSlice(items, ui.page);
+  const pages = pageCount(items.length);
+  const { from, to } = pageRange(ui.page, items.length);
+
   const storedFor = (i) => getItem(i.type, i.id);
   const count = h(
     'p',
     { class: 'section-sub', style: 'margin:0 0 12px' },
-    `${items.length} title${items.length === 1 ? '' : 's'}`
+    pages > 1
+      ? `${from}–${to} of ${items.length} titles`
+      : `${items.length} title${items.length === 1 ? '' : 's'}`
   );
 
-  if (ui.sort === 'genre') {
-    // Genre order is only useful with headers; otherwise it looks like noise.
-    fill(host, 
-      count,
-      groupByGenre(items).map(([genre, group]) => [
-        h('h2', { class: 'section-title' }, genre),
-        h('div', { class: 'grid' }, group.map((i) => tile(i, storedFor(i), openItem))),
-      ])
-    );
-  } else {
-    fill(host, 
-      count,
-      h('div', { class: 'grid' }, items.map((i) => tile(i, storedFor(i), openItem)))
-    );
-  }
+  // Grouping applies to the page, not the library: the list is sorted by genre
+  // before it is sliced, so the headers still read in order across pages.
+  const body =
+    ui.sort === 'genre'
+      ? groupByGenre(shown).map(([genre, group]) => [
+          h('h2', { class: 'section-title' }, genre),
+          h('div', { class: 'grid' }, group.map((i) => tile(i, storedFor(i), openItem))),
+        ])
+      : h('div', { class: 'grid' }, shown.map((i) => tile(i, storedFor(i), openItem)));
 
+  fill(host, count, body, pager(host, items.length, pages));
+
+  // Deliberately the whole filtered list, not this page: sorting by IMDb is
+  // only correct if the scores exist for everything being sorted, so the
+  // backfill has to keep chipping away past the visible 50.
   maybeBackfillScores(items, host);
 }
 

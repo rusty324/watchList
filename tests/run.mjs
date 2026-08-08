@@ -450,6 +450,68 @@ test('a check is needed for missing entries and for stale ones', () => {
   assert.equal(providers.needsCheck(items, new Map(), now).length, 4);
 });
 
+/* ---------- paging ---------- */
+
+const many = (n) => Array.from({ length: n }, (_, i) => ({ id: i + 1 }));
+const ids = (list) => list.map((i) => i.id);
+
+test('pages are 50 long and count up from one', () => {
+  assert.equal(sortMod.PAGE_SIZE, 50);
+  assert.equal(sortMod.pageCount(1000), 20);
+  assert.equal(sortMod.pageCount(1001), 21); // a remainder gets its own page
+  assert.equal(sortMod.pageCount(50), 1);
+  // An empty list is still "page 1 of 1", never "page 1 of 0".
+  assert.equal(sortMod.pageCount(0), 1);
+});
+
+test('a page slice covers the list exactly once, in order', () => {
+  const list = many(120);
+  assert.deepEqual(ids(sortMod.pageSlice(list, 1)).slice(0, 2), [1, 2]);
+  assert.equal(sortMod.pageSlice(list, 1).length, 50);
+  assert.deepEqual(ids(sortMod.pageSlice(list, 2))[0], 51);
+  // The last page is the remainder, not a full page padded out.
+  assert.equal(sortMod.pageSlice(list, 3).length, 20);
+  assert.deepEqual(ids(sortMod.pageSlice(list, 3)).at(-1), 120);
+
+  const seen = new Set();
+  for (let p = 1; p <= sortMod.pageCount(list.length); p++) {
+    for (const item of sortMod.pageSlice(list, p)) {
+      assert.ok(!seen.has(item.id), `id ${item.id} appeared on two pages`);
+      seen.add(item.id);
+    }
+  }
+  assert.equal(seen.size, 120);
+});
+
+test('a page out of range clamps instead of showing nothing', () => {
+  const list = many(120);
+  // Narrowing a filter while on page 3 must not leave you staring at a blank
+  // grid — the last real page is what you get.
+  assert.equal(sortMod.clampPage(9, 120), 3);
+  assert.equal(sortMod.clampPage(0, 120), 1);
+  assert.equal(sortMod.clampPage(-4, 120), 1);
+  assert.equal(sortMod.clampPage(2.7, 120), 2);
+  assert.equal(sortMod.clampPage(undefined, 120), 1);
+  assert.equal(sortMod.clampPage(3, 0), 1);
+  assert.equal(sortMod.pageSlice(list, 99).length, 20);
+});
+
+test('the page range reads as an inclusive 1-based span', () => {
+  assert.deepEqual(sortMod.pageRange(1, 660), { from: 1, to: 50 });
+  assert.deepEqual(sortMod.pageRange(2, 660), { from: 51, to: 100 });
+  // The last page stops at the total, not at a round 50.
+  assert.deepEqual(sortMod.pageRange(14, 660), { from: 651, to: 660 });
+  assert.deepEqual(sortMod.pageRange(1, 0), { from: 0, to: 0 });
+});
+
+test('paging composes with filtering and sorting, not around them', () => {
+  // Sorting happens over the whole library and slicing after it, so page 1 of
+  // "Title A–Z" is the alphabetical start rather than the first 50 stored.
+  const sorted = sortMod.applyList(LIST, { sort: 'title' });
+  assert.deepEqual(titlesOf(sortMod.pageSlice(sorted, 1)), titlesOf(sorted));
+  assert.equal(sortMod.pageCount(sorted.length), 1);
+});
+
 test('the list filter box matches original titles too', () => {
   assert.deepEqual(titlesOf(sortMod.applyList(LIST, { query: '기생충' })), ['Parasite']);
   assert.deepEqual(titlesOf(sortMod.applyList(LIST, { query: 'bread' })), []);

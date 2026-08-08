@@ -7,8 +7,8 @@ site on GitHub Pages — no server, no accounts, no build step.
 - **Browse** — search TMDB, or get recommendations built from your own ratings.
 - **Genres** — pick a genre, get picks in it you haven't seen, filter to films or
   TV. Anime is its own tile, sourced from AniList.
-- **Lists** — everything you've tracked, with filters that combine and eleven
-  sort orders.
+- **Lists** — everything you've tracked, with filters that combine, eleven sort
+  orders, and paging that keeps a four-figure library quick.
 - **Three verdicts** — *Liked it*, *One and done* ("glad I saw it, but never
   again"), and *Not for me*, which you can hide from view entirely.
 - **Where to watch** — what's streaming, free, rentable or buyable in your
@@ -174,6 +174,30 @@ of your synced data: availability is regional and changes as licences move, so
 syncing it would have one device overwrite another's answer with something
 neither of you chose, for a value that goes stale on its own anyway. Changing
 your region in Settings clears it.
+
+### Long lists
+
+The Lists tab shows **50 titles a page**, with Previous / Next and a picker to
+jump. Anything that changes what matches — a filter, a sort, the filter box —
+takes you back to page 1, and turning a page returns you to the top.
+
+This is a performance measure, not a tidiness one. Filtering and sorting a
+four-figure library costs about **3 ms**; building the tiles is what hurts,
+since each is several elements plus a press-and-hold listener that the browser
+then has to lay out. Measured at phone speed with 1,200 titles:
+
+| | before | after |
+| --- | --- | --- |
+| Opening the tab | 1,484 ms | 399 ms |
+| Tiles in the page | 660 | 50 |
+| Turning a page | — | 60 ms |
+
+The filter box is also **debounced**. It used to redraw on every keystroke, so
+typing an eight-letter title meant eight full rebuilds — with a large library
+that was the single slowest thing in the app.
+
+Browse and Genres aren't paged: an API page is twenty-odd results, which was
+never the problem.
 
 ### Search filters
 

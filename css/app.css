@@ -216,6 +216,26 @@ svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; 
 }
 .chip.avail-check[disabled] { color: var(--fg-faint); }
 
+/* Page controls under the grid. A picker rather than a strip of numbers: a
+ * four-figure library runs to twenty-odd pages, more than fits across a phone. */
+.pager {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 20px 0 4px;
+}
+.pager .page-pick { flex: 1; min-width: 0; text-align: center; }
+.page-step {
+  flex: 0 0 auto;
+  width: 44px; height: 44px;      /* a full touch target, not just the glyph */
+  display: grid; place-items: center;
+  border-radius: var(--r-sm);
+  background: var(--bg-sunk);
+  color: var(--fg-dim);
+}
+.page-step svg { width: 20px; height: 20px; }
+.page-step[disabled] { opacity: 0.35; }
+
 .sortbar { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
 .sortbar label { font-size: 13px; color: var(--fg-dim); font-weight: 600; }
 .select {

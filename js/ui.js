@@ -53,6 +53,7 @@ const PATHS = {
   search: '<circle cx="11" cy="11" r="7"/><path d="M16.5 16.5 21 21"/>',
   close: '<path d="M18 6 6 18M6 6l12 12"/>',
   back: '<path d="m15 18-6-6 6-6"/>',
+  forward: '<path d="m9 18 6-6-6-6"/>',
   check: '<path d="m4 12 5 5L20 6"/>',
   up: '<path d="M7 22V11l5-9a2.5 2.5 0 0 1 2.5 3l-1 5H20a2 2 0 0 1 2 2.4l-1.4 7A2 2 0 0 1 18.6 22H7Z"/><rect x="2" y="11" width="5" height="11" rx="1"/>',
   down: '<path d="M17 2v11l-5 9a2.5 2.5 0 0 1-2.5-3l1-5H4a2 2 0 0 1-2-2.4l1.4-7A2 2 0 0 1 5.4 2H17Z"/><rect x="17" y="2" width="5" height="11" rx="1"/>',
@@ -171,6 +172,19 @@ export function skeletonGrid(count = 6) {
     { class: 'grid' },
     Array.from({ length: count }, () => h('div', { class: 'skeleton poster-sk' }))
   );
+}
+
+/**
+ * The window scrolls, not #view — it has no `overflow`, so the `view.scrollTop`
+ * this used to set was silently doing nothing.
+ *
+ * Lives here rather than in app.js because the views need it too (turning a
+ * page should put you back at the top) and importing app.js from a view would
+ * be circular.
+ */
+export function scrollToTop({ smooth = true } = {}) {
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  window.scrollTo({ top: 0, behavior: smooth && !reduce ? 'smooth' : 'auto' });
 }
 
 export function emptyState({ iconName = 'film', title, body, action }) {

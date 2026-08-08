@@ -1,7 +1,7 @@
 /* Boot, routing, and the wiring between the store and background sync. */
 
 import { subscribe } from './store.js';
-import { sheetDepth, closeAllSheets } from './ui.js';
+import { sheetDepth, closeAllSheets, scrollToTop } from './ui.js';
 import {
   renderBrowse,
   invalidateRecommendations,
@@ -50,15 +50,6 @@ function render() {
   // Moving within a tab (picking a genre) shouldn't fight the browser over
   // scroll position the way switching tabs should reset it.
   if (tabChanged) scrollToTop({ smooth: false });
-}
-
-/**
- * The window scrolls, not #view — it has no `overflow`, so the `view.scrollTop`
- * this used to set was silently doing nothing.
- */
-function scrollToTop({ smooth = true } = {}) {
-  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
-  window.scrollTo({ top: 0, behavior: smooth && !reduce ? 'smooth' : 'auto' });
 }
 
 /**

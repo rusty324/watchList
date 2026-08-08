@@ -63,7 +63,7 @@ const TAG_QUERY = `
 
 const MATCH_QUERY = `
   query ($search: String) {
-    Media(type: ANIME, search: $search, sort: SEARCH_MATCH) {
+    Media(type: ANIME, search: $search, sort: SEARCH_MATCH, isAdult: true) {
       ${MEDIA_FIELDS}
     }
   }

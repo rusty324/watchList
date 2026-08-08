@@ -524,6 +524,40 @@ if (await page.locator('.sheet').count()) {
   await page.waitForTimeout(700);
 }
 
+// The options open around the finger, not around the tile. Press near the
+// bottom of a tall poster, where the two placements are furthest apart.
+{
+  const box = await holdTarget.boundingBox();
+  const pressY = box.y + box.height - 30;
+  await page.mouse.move(box.x + box.width / 2, pressY);
+  await page.mouse.down();
+  await page.waitForTimeout(650);
+
+  const gap = await page.locator('.rate-gap').boundingBox();
+  const gapCentre = gap.y + gap.height / 2;
+  console.log(
+    'press y', Math.round(pressY),
+    '| finger gap centre', Math.round(gapCentre),
+    '| tile top', Math.round(box.y)
+  );
+  if (Math.abs(gapCentre - pressY) > 2) {
+    problems.push(`the options did not open around the finger: gap at ${Math.round(gapCentre)}, pressed at ${Math.round(pressY)}`);
+  }
+  const kinds = await page.locator('.rate-opt').evaluateAll((els) => els.map((e) => e.dataset.kind));
+  if (kinds.join(',') !== 'up,once,down,hide') {
+    problems.push(`wrong options offered: ${kinds.join(',')}`);
+  }
+
+  // Releasing without sliding must commit nothing. This matters more than it
+  // used to: clamping at a screen edge can leave an option under a stationary
+  // fingertip, and that must never count as a choice.
+  await page.mouse.up();
+  await page.waitForTimeout(700);
+  if (await page.locator('.grid .tile').first().locator('.badge').count()) {
+    problems.push('releasing without sliding still applied a rating');
+  }
+}
+
 // hold, drag onto "Liked it", release
 await press(650);
 if (!(await page.locator('.rate-pop.in').count())) {
@@ -730,6 +764,69 @@ if (purchasable.includes('Breaking Bad')) {
 }
 await page.locator('.chip.clear-filters').click();
 await page.waitForTimeout(400);
+
+/* ---- 10c. hide a title, then get it back ---- */
+
+const listedNow = () => page.locator('.grid .tile .t-name').allTextContents();
+const before = await listedNow();
+const victim = 'Stranger Things';
+if (!before.includes(victim)) problems.push(`${victim} is not in the list to hide`);
+
+// Press and hold it, slide down onto Hide.
+{
+  const target = page.locator('.grid .tile', { hasText: victim }).first();
+  // Six filter rows push the second grid row below the fold, and a press at
+  // off-screen coordinates lands on nothing.
+  await target.scrollIntoViewIfNeeded();
+  await page.waitForTimeout(300);
+  const box = await target.boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.waitForTimeout(650);
+  if (!(await page.locator('.rate-pop.in').count())) {
+    problems.push('press and hold on a Lists tile did not open the options');
+  }
+  const hide = await page.locator('.rate-opt.hide').boundingBox();
+  await page.mouse.move(hide.x + hide.width / 2, hide.y + hide.height / 2, { steps: 8 });
+  await page.waitForTimeout(200);
+  const on = await page.locator('.rate-opt.on').count()
+    ? await page.locator('.rate-opt.on').getAttribute('data-kind')
+    : null;
+  if (on !== 'hide') problems.push(`sliding down highlighted ${on}, not hide`);
+  await page.mouse.up();
+  await page.waitForTimeout(1000);
+}
+
+const afterHide = await listedNow();
+console.log('lists after hiding ->', afterHide.join(', '));
+// Hidden means gone from Lists too, not just from the discovery tabs.
+if (afterHide.includes(victim)) problems.push('a hidden title is still in the Lists tab');
+if (afterHide.length !== before.length - 1) {
+  problems.push(`hiding removed ${before.length - afterHide.length} titles, expected 1`);
+}
+await shot('21e-lists-after-hide');
+
+// Settings is the guaranteed way back, since it is gone from every grid.
+await page.click('.icon-btn[aria-label="Settings"]');
+await page.waitForTimeout(900);
+const hiddenRows = await page.locator('.hidden-row .h-name').allTextContents();
+console.log('settings, hidden titles ->', hiddenRows.join(', '));
+if (!hiddenRows.includes(victim)) {
+  problems.push(`the hidden title is not listed in Settings: ${hiddenRows.join('|')}`);
+}
+await page.locator('.hidden-list').scrollIntoViewIfNeeded();
+await shot('21f-settings-hidden');
+
+await page.locator('.hidden-row', { hasText: victim }).locator('button').click();
+await page.waitForTimeout(500);
+if ((await page.locator('.hidden-row').count()) !== 0) {
+  problems.push('un-hiding did not remove the row from Settings');
+}
+await page.goBack();
+await page.waitForTimeout(900);
+const afterUnhide = await listedNow();
+console.log('lists after un-hiding ->', afterUnhide.join(', '));
+if (!afterUnhide.includes(victim)) problems.push('un-hiding did not bring the title back');
 
 /* ---- 11. genres tab ---- */
 const tabLabels = await page.locator('.tab span').allTextContents();
@@ -1125,6 +1222,73 @@ if ((await bp.locator('.pager').getAttribute('data-page')) !== '3') {
   problems.push('the page picker did not jump to the chosen page');
 }
 await bp.screenshot({ path: `${OUT}/32-lists-last-page.png` });
+
+/* ---- 13. a genre keeps digging once you've dealt with page 1 ----
+ *
+ * The discover fixture serves one title a page, so marking off page 1 of each
+ * medium leaves the genre empty unless the view walks to page 2 and beyond.
+ * Before this change it fetched page 1 only and said "nothing new here" for
+ * good. Seeds storage, so it runs in the bulk context alongside the paging
+ * checks rather than in the main flow. */
+await bp.evaluate(() => {
+  // Page 1 of Drama: the first drama film and the first drama series.
+  localStorage.setItem(
+    'wl.data.v1',
+    JSON.stringify({
+      version: 2,
+      items: {
+        'movie:120467': { type: 'movie', id: 120467, title: 'The Grand Budapest Hotel', watched: true, seasons: {}, updatedAt: 1 },
+        'tv:1396': { type: 'tv', id: 1396, title: 'Breaking Bad', watched: true, seasons: {}, updatedAt: 2 },
+      },
+      settings: { defaultTitleLang: 'en', theme: 'auto', hideDisliked: true, region: 'US', myProviders: [] },
+    })
+  );
+});
+await bp.reload({ waitUntil: 'networkidle' });
+await bp.waitForTimeout(500);
+await bp.click('.tab[data-tab="genres"]');
+await bp.waitForTimeout(700);
+await bp.locator('.genre-tile', { hasText: 'Drama' }).first().click();
+await bp.waitForTimeout(2200);
+
+const deeper = await bp.locator('.grid .tile .t-name').allTextContents();
+console.log('drama with page 1 already seen ->', deeper.join(', '));
+if (!deeper.length) {
+  problems.push('a genre whose first page is all seen came back empty instead of fetching more');
+}
+for (const seen of ['The Grand Budapest Hotel', 'Breaking Bad']) {
+  if (deeper.includes(seen)) problems.push(`${seen} is already watched but was offered as a new pick`);
+}
+if (new Set(deeper).size !== deeper.length) {
+  problems.push(`the same title appeared twice across pages: ${deeper.join('|')}`);
+}
+await bp.screenshot({ path: `${OUT}/33-genre-deeper-pages.png` });
+
+// And once every page really is exhausted, it says so rather than spinning.
+await bp.evaluate(() => {
+  const data = JSON.parse(localStorage.getItem('wl.data.v1'));
+  for (const id of [496243, 120467]) {
+    data.items[`movie:${id}`] = { type: 'movie', id, title: String(id), watched: true, seasons: {}, updatedAt: 3 };
+  }
+  for (const id of [1396, 66732, 93405]) {
+    data.items[`tv:${id}`] = { type: 'tv', id, title: String(id), watched: true, seasons: {}, updatedAt: 3 };
+  }
+  localStorage.setItem('wl.data.v1', JSON.stringify(data));
+});
+await bp.reload({ waitUntil: 'networkidle' });
+await bp.waitForTimeout(500);
+await bp.click('.tab[data-tab="genres"]');
+await bp.waitForTimeout(700);
+await bp.locator('.genre-tile', { hasText: 'Drama' }).first().click();
+await bp.waitForTimeout(2400);
+const exhausted = await bp.locator('.empty p').textContent().catch(() => '');
+console.log('drama, everything seen ->', exhausted);
+if (!/page/i.test(exhausted)) {
+  problems.push(`an exhausted genre did not say how far it looked: "${exhausted}"`);
+}
+if (await bp.locator('.grid .tile').count()) {
+  problems.push('an exhausted genre still rendered tiles');
+}
 
 await browser.close();
 

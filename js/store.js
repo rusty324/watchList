@@ -138,11 +138,17 @@ export function getItem(type, id) {
   return state.items[itemKey(type, id)] || null;
 }
 
-/** True once the item carries any user intent worth keeping around. */
+/**
+ * True once the item carries any user intent worth keeping around.
+ *
+ * `hidden` counts. Most hidden titles carry nothing else — the whole point is
+ * to dismiss something you have no opinion about — so leaving it out would have
+ * pruneUntracked quietly delete the hide and bring the title back.
+ */
 export function isTracked(item) {
   if (!item) return false;
   return Boolean(
-    item.watched || item.inWatchlist || item.rating || tvWatchedCount(item) > 0
+    item.watched || item.inWatchlist || item.rating || item.hidden || tvWatchedCount(item) > 0
   );
 }
 
@@ -200,6 +206,41 @@ export function clearRating(type, id) {
 export function setWatchlist(type, id, on, meta) {
   upsertItem(type, id, { ...(meta || {}), inWatchlist: on });
   persist('watchlist');
+}
+
+/**
+ * "Stop showing me this."
+ *
+ * Distinct from a Not-for-me rating, which is a verdict about the title and
+ * steers the recommender away from its genres. Hiding is about the grid: no
+ * opinion recorded, just gone. Stored on the item, so it exports and syncs like
+ * any other decision.
+ */
+export function setHidden(type, id, on, meta) {
+  upsertItem(type, id, { ...(meta || {}), hidden: on });
+  persist('hidden');
+}
+
+/** Everything currently hidden, newest hide first, for the Settings list. */
+export function hiddenItems() {
+  return Object.values(state.items)
+    .filter((i) => i.hidden)
+    .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+}
+
+export function unhideAll() {
+  let cleared = 0;
+  for (const item of Object.values(state.items)) {
+    if (!item.hidden) continue;
+    item.hidden = false;
+    item.updatedAt = Date.now();
+    cleared++;
+  }
+  // Un-hiding is usually the last thing keeping a record alive, so drop the
+  // ones that now hold nothing rather than leaving empty shells to sync.
+  pruneUntracked();
+  persist('hidden');
+  return cleared;
 }
 
 export function setTitlePref(type, id, pref) {

@@ -5,7 +5,7 @@
  * scroll position halfway down a season's episode list.
  */
 
-import { h, icon, posterBox, displayTitle, toast } from '../ui.js';
+import { h, icon, fill, posterBox, displayTitle, toast } from '../ui.js';
 import { profileUrl, posterUrl } from '../tmdb.js';
 import { genreKeyFromName } from '../genres.js';
 import {
@@ -15,6 +15,7 @@ import {
   clearRating,
   setWatchlist,
   setTitlePref,
+  setHidden,
 } from '../store.js';
 
 /* ---------- hero ---------- */
@@ -268,6 +269,44 @@ export function checkboxAction(label, isOn, setOn) {
 
   function update() {
     node.setAttribute('aria-pressed', String(Boolean(isOn())));
+  }
+  update();
+
+  return { node, update };
+}
+
+/**
+ * The "hidden" toggle on a detail sheet.
+ *
+ * Only rendered once a title is actually hidden. Hiding is a press-and-hold
+ * gesture on a grid, and a hidden title is gone from every grid — so without
+ * this the only way back would be Settings, and a title you found by searching
+ * its name would give no hint about why it never shows up.
+ */
+export function hiddenNotice(meta) {
+  const node = h('div', { class: 'hidden-note', hidden: true });
+
+  function update() {
+    const on = Boolean(getItem(meta.type, meta.id)?.hidden);
+    node.hidden = !on;
+    if (!on) return;
+    fill(node,
+      icon('eye-off'),
+      h('span', {}, 'Hidden from Browse, Genres and your Lists.'),
+      h(
+        'button',
+        {
+          type: 'button',
+          class: 'chip',
+          onclick: () => {
+            setHidden(meta.type, meta.id, false, snapshot(meta));
+            update();
+            toast('No longer hidden');
+          },
+        },
+        'Un-hide'
+      )
+    );
   }
   update();
 

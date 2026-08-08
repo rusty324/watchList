@@ -32,6 +32,7 @@ import {
   checkboxAction,
   castRow,
   providerBox,
+  hiddenNotice,
   genreChip,
   snapshot,
 } from './parts.js';
@@ -124,6 +125,7 @@ export function openMovie(id, hint) {
         scores.node,
         rating.node,
         h('div', { class: 'action-row' }, watched.node, watchlist.node),
+        hiddenNotice(meta).node,
         providerBox(meta.providers),
         meta.overview ? h('p', { class: 'overview' }, meta.overview) : null,
         meta.cast?.length ? h('h3', { class: 'section-title' }, 'Cast') : null,
@@ -330,6 +332,7 @@ export function openTv(id, hint) {
         rating.node,
         progress,
         h('div', { class: 'action-row' }, showWatched.node, watchlist.node),
+        hiddenNotice(meta).node,
         providerBox(meta.providers),
         meta.overview ? h('p', { class: 'overview' }, meta.overview) : null,
         meta.cast?.length ? h('h3', { class: 'section-title' }, 'Cast') : null,

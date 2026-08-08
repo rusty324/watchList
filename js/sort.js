@@ -125,6 +125,23 @@ export function hiddenByPreference(item, settings) {
   return Boolean(settings?.hideDisliked) && item?.rating === 'down';
 }
 
+/**
+ * Dismissed by hand, via press-and-hold.
+ *
+ * Deliberately not folded into hiddenByPreference, however similar they look.
+ * That one is a display preference with an escape hatch — selecting the "Not
+ * for me" chip overrides it — and a hide has to survive that chip, or dismissing
+ * a title you'd also rated down would silently undo itself.
+ */
+export function isHidden(item) {
+  return Boolean(item?.hidden);
+}
+
+/** What a browsing grid should leave out: both rules at once. */
+export function suppressed(item, settings) {
+  return isHidden(item) || hiddenByPreference(item, settings);
+}
+
 /** Title used for display and for the alphabetical sort. */
 export function sortTitle(item) {
   const base =
@@ -224,6 +241,9 @@ export function applyList(
   const hide = active.rating?.has('disliked') ? null : settings;
 
   return trackedItems(items)
+    // Unconditional, unlike the disliked rule above: a hide is an instruction,
+    // not a preference, and Settings is where it gets undone.
+    .filter((i) => !isHidden(i))
     .filter((i) => !hiddenByPreference(i, hide))
     .filter((i) => matchesFilters(i, active, availability))
     .filter((i) =>

@@ -500,10 +500,15 @@ export function mockFetch(path, params = {}) {
   if (m) {
     const type = m[1];
     const wanted = Number(params.with_genres);
-    const results = allResults()
+    const all = allResults()
       .filter((r) => r.media_type === type)
       .filter((r) => (r.genres || []).some((g) => g.id === wanted));
-    return delay({ results, total_results: results.length });
+    // One title a page, so the Genres tab's "keep asking for pages" loop has
+    // something to walk. A real page is 20; what matters here is that page 2
+    // differs from page 1 and that running off the end returns nothing.
+    const page = Math.max(1, Number(params.page) || 1);
+    const results = all.slice(page - 1, page);
+    return delay({ results, total_results: all.length, page });
   }
 
   if (path === '/search/multi') {

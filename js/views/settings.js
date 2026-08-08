@@ -12,6 +12,9 @@ import {
   setSetting,
   exportData,
   replaceData,
+  hiddenItems,
+  setHidden,
+  unhideAll,
 } from '../store.js';
 import { checkboxAction } from './parts.js';
 import { validateKey, watchRegions, providersForRegion, resolveRegion } from '../tmdb.js';
@@ -356,6 +359,73 @@ export function openSettings() {
           // No key yet, or offline: the Auto option alone still works.
         });
 
+      /* ---- hidden titles ---- */
+
+      // Press-and-hold takes a title out of every grid, including Lists. That
+      // has to be undoable somewhere, and this is the only place a hidden title
+      // is guaranteed to be reachable — hiding is per title, so the reversal is
+      // too, with a blanket option for when you just want them all back.
+      const hiddenBlock = h('div', {});
+
+      function paintHidden() {
+        const items = hiddenItems();
+
+        if (!items.length) {
+          fill(hiddenBlock,
+            h('p', { class: 'hint', style: 'margin:0' },
+              'Nothing hidden. Press and hold a poster and slide down onto Hide to take a ' +
+              'title out of your picks without rating it.')
+          );
+          return;
+        }
+
+        fill(hiddenBlock,
+          h('p', { class: 'hint', style: 'margin:0 0 10px' },
+            `${items.length} title${items.length === 1 ? '' : 's'} hidden from Browse, Genres and your Lists. ` +
+            'Searching by name still finds them.'),
+          h(
+            'div',
+            { class: 'hidden-list' },
+            items.map((item) =>
+              h(
+                'div',
+                { class: 'hidden-row', dataset: { key: `${item.type}:${item.id}` } },
+                h('span', { class: 'h-name' }, item.title || `${item.type} ${item.id}`),
+                h('span', { class: 'h-year' }, item.year ? String(item.year) : ''),
+                h(
+                  'button',
+                  {
+                    type: 'button',
+                    class: 'chip',
+                    onclick: () => {
+                      setHidden(item.type, item.id, false);
+                      paintHidden();
+                      toast(`${item.title} — no longer hidden`);
+                    },
+                  },
+                  'Un-hide'
+                )
+              )
+            )
+          ),
+          h(
+            'button',
+            {
+              type: 'button',
+              class: 'btn secondary',
+              style: 'margin-top:10px',
+              onclick: () => {
+                const n = unhideAll();
+                paintHidden();
+                toast(`${n} title${n === 1 ? '' : 's'} un-hidden`);
+              },
+            },
+            'Un-hide all'
+          )
+        );
+      }
+      paintHidden();
+
       const providerFilter = h('input', {
         type: 'search',
         placeholder: 'Filter services',
@@ -452,6 +522,9 @@ export function openSettings() {
           'Keeps titles you rated “Not for me” out of your Lists and out of Trending. ' +
           'Searching by name still finds them, and the “Not for me” filter on the Lists tab ' +
           'always shows them, so you can always change your mind.'),
+
+        h('h3', { class: 'section-title' }, 'Hidden titles'),
+        hiddenBlock,
 
         h('h3', { class: 'section-title' }, 'Where to watch'),
         field('Region', regionSelect,

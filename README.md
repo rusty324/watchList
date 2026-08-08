@@ -10,7 +10,8 @@ site on GitHub Pages — no server, no accounts, no build step.
 - **Lists** — everything you've tracked, with filters that combine, eleven sort
   orders, and paging that keeps a four-figure library quick.
 - **Three verdicts** — *Liked it*, *One and done* ("glad I saw it, but never
-  again"), and *Not for me*, which you can hide from view entirely.
+  again"), and *Not for me*, which you can hide from view entirely. Press and
+  hold any poster to set one, or to hide a title outright.
 - **Where to watch** — what's streaming, free, rentable or buyable in your
   country, with your own subscriptions marked.
 - **Movies** — year, genres, IMDb / Rotten Tomatoes / TMDB scores, a synopsis,
@@ -216,10 +217,20 @@ Browse clears the search, and on Genres backs out to the genre grid.
 
 ### Rating without opening anything
 
-**Press and hold a poster for about half a second**, then slide onto one of the
-three verdicts that appear above it and let go. Release anywhere else and
-nothing happens. Dragging onto the verdict already set clears it, the same as
-tapping it twice in the detail sheet does.
+**Press and hold a poster for about half a second.** Four targets appear around
+your fingertip — the three verdicts in a row just above it, and **Hide** just
+below — so slide onto one and let go.
+
+```
+         [ Liked it ] [ One and done ] [ Not for me ]
+                          (finger)
+                          [  Hide  ]
+```
+
+They open around the **finger**, not around the tile, so the slide is short
+wherever on a poster you happened to press. Release without sliding, or
+anywhere that isn't a target, and nothing happens. Dragging onto the option
+already set undoes it, the same as tapping it twice in the detail sheet.
 
 Works on every poster grid — Browse, Genres and Lists. Anime tiles from the
 AniList grid have no TMDB id until they're opened, so releasing on an option
@@ -230,6 +241,21 @@ shipped the Vibration API, so the feedback is visual. And it has **no keyboard
 equivalent** — a long-press can't have one — so it's an accelerator rather than
 a new capability; the detail sheet's rating row offers the same three verdicts
 to everyone.
+
+### Hiding a title
+
+**Hide** is the fourth press-and-hold target, and it is not a verdict. *Not for
+me* is an opinion — it steers the recommender away from that title's genres.
+Hiding records no opinion at all; it just takes the title out of your way.
+
+A hidden title is gone from **Browse, Genres, your recommendations and your
+Lists**. Searching by name still finds it, and the sheet then says it's hidden
+and offers to un-hide it — the same principle as "Not for me": something you
+typed the name of should never look like it doesn't exist.
+
+**Settings → Hidden titles** lists everything you've hidden with an un-hide
+button on each, plus *Un-hide all*. Because hiding removes a title from every
+grid, that list is the one place it's guaranteed to be reachable.
 
 ### When something stops working
 
@@ -246,14 +272,21 @@ can't report a dead service as healthy.
 ### Genres
 
 The middle tab opens on a grid of 21 genres. Pick one and you get popular titles
-in it, minus anything you've already watched, rated or listed, re-ranked by your
-taste — within a single genre the shared genre cancels out, so what actually
+in it, minus anything you've already watched, rated, hidden or listed, re-ranked
+by your taste — within a single genre the shared genre cancels out, so what actually
 moves the order is a candidate's *other* genres. Chips filter to Movies or TV,
 and **Show all** drops the exclusion when you'd rather browse a genre's canon
 than get new-to-you picks.
 
 Genres that TMDB only has for one medium (Horror is film-only, Reality is
 TV-only) don't offer a filter that could only ever come back empty.
+
+**A genre keeps digging.** Subtracting everything you've dealt with used to
+leave nothing once you'd worked through the first page of results — and the more
+of a genre you'd seen, the more certain that was. It now keeps requesting pages
+until it has 40 new-to-you titles, giving up after five. Pages are cached
+individually, so going back into a genre costs nothing, and the empty state
+tells you how far it looked before running out.
 
 **Genre chips in a detail sheet are tappable** and open that genre with the
 medium carried over — a TV show's *Drama* chip opens Drama already filtered to

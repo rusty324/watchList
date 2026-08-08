@@ -236,6 +236,40 @@ svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; 
 .page-step svg { width: 20px; height: 20px; }
 .page-step[disabled] { opacity: 0.35; }
 
+/* Why a title you searched for isn't showing up anywhere else. */
+.hidden-note {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border-radius: var(--r-md);
+  background: var(--bg-sunk);
+  color: var(--fg-dim);
+  font-size: 13px;
+}
+.hidden-note svg { flex: 0 0 auto; width: 17px; height: 17px; }
+.hidden-note span { flex: 1; min-width: 0; }
+
+/* Hidden titles in Settings. Capped and scrollable: hiding is cheap, so this
+ * list can get long, and it should not push the rest of Settings off screen. */
+.hidden-list { max-height: 260px; overflow-y: auto; }
+.hidden-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--line);
+}
+.hidden-row .h-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 14px; font-weight: 600;
+}
+.hidden-row .h-year { flex: 0 0 auto; color: var(--fg-faint); font-size: 12.5px; }
+.hidden-row .chip { padding: 5px 11px; font-size: 12.5px; }
+
 .sortbar { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
 .sortbar label { font-size: 13px; color: var(--fg-dim); font-weight: 600; }
 .select {
@@ -846,6 +880,24 @@ svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; 
   top: 0;
   left: 0;
   z-index: 45;
+  /* Verdicts, a gap the fingertip occupies, then Hide. The popover is
+   * positioned so the middle of that gap lands on the press point. */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  opacity: 0;
+  visibility: hidden;
+  transform-origin: center center;
+  scale: 0.86;
+  transition: opacity 0.14s ease, scale 0.16s var(--ease), visibility 0.16s;
+  pointer-events: none; /* the finger is captured; never intercept taps */
+}
+.rate-pop.in { opacity: 1; visibility: visible; scale: 1; }
+/* Grow from the edge the popover was pushed away from. */
+.rate-pop[data-placement='shifted-up'] { transform-origin: center bottom; }
+.rate-pop[data-placement='shifted-down'] { transform-origin: center top; }
+
+.rate-row {
   display: flex;
   gap: 6px;
   padding: 6px;
@@ -854,15 +906,9 @@ svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; 
   backdrop-filter: saturate(180%) blur(20px);
   -webkit-backdrop-filter: saturate(180%) blur(20px);
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.34), inset 0 0 0 1px var(--line);
-  opacity: 0;
-  visibility: hidden;
-  transform-origin: center bottom;
-  scale: 0.86;
-  transition: opacity 0.14s ease, scale 0.16s var(--ease), visibility 0.16s;
-  pointer-events: none; /* the finger is captured; never intercept taps */
 }
-.rate-pop.in { opacity: 1; visibility: visible; scale: 1; }
-.rate-pop[data-placement='below'] { transform-origin: center top; }
+/* Clear of the fingertip in both directions, so neither row sits under it. */
+.rate-gap { height: 54px; flex: 0 0 auto; }
 
 .rate-opt {
   min-width: 72px;
@@ -891,6 +937,11 @@ svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; 
 .rate-opt.on.up { background: var(--up); }
 .rate-opt.on.once { background: var(--once); }
 .rate-opt.on.down { background: var(--down); }
+.rate-opt.on.hide { background: var(--fg-dim); }
+
+/* Hide records no opinion, so it is deliberately the quietest target here —
+ * it should not read as a fourth verdict. */
+.rate-opt.hide { min-width: 96px; min-height: 48px; color: var(--fg-faint); }
 
 @media (prefers-reduced-motion: reduce) {
   .rate-pop, .rate-opt, .tile.pressing .poster { transition: none; scale: 1; }

@@ -450,6 +450,88 @@ test('a check is needed for missing entries and for stale ones', () => {
   assert.equal(providers.needsCheck(items, new Map(), now).length, 4);
 });
 
+/* ---------- hidden titles ---------- */
+
+const WITH_HIDDEN = {
+  ...LIST,
+  // Hidden and otherwise untouched — the ordinary case, since hiding is for
+  // titles you have no opinion about.
+  'movie:6': { type: 'movie', id: 6, title: 'Dismissed', year: 2011, hidden: true, genres: ['Drama'], scores: {} },
+  // Hidden *and* rated down, which is where the two rules could collide.
+  'movie:7': { type: 'movie', id: 7, title: 'Dismissed And Disliked', year: 2012, rating: 'down', hidden: true, genres: ['Horror'], scores: {} },
+};
+
+test('hiding is a separate rule from the hide-disliked preference', () => {
+  // isHidden must not consult settings, or the Settings toggle would sweep
+  // hand-hidden titles back into view.
+  assert.equal(sortMod.isHidden({ hidden: true }), true);
+  assert.equal(sortMod.isHidden({ rating: 'down' }), false);
+  assert.equal(sortMod.isHidden({}), false);
+  assert.equal(sortMod.isHidden(null), false);
+
+  // suppressed() is the union, and is what the browsing grids use.
+  const settings = { hideDisliked: true };
+  assert.equal(sortMod.suppressed({ hidden: true }, settings), true);
+  assert.equal(sortMod.suppressed({ rating: 'down' }, settings), true);
+  // Turning the preference off releases a merely-disliked title...
+  assert.equal(sortMod.suppressed({ rating: 'down' }, { hideDisliked: false }), false);
+  // ...but never one that was hidden by hand.
+  assert.equal(sortMod.suppressed({ hidden: true }, { hideDisliked: false }), true);
+});
+
+test('hidden titles leave the Lists tab, and the "Not for me" chip cannot recall them', () => {
+  const shown = titlesOf(sortMod.applyList(WITH_HIDDEN, { settings: { hideDisliked: true } }));
+  assert.ok(!shown.includes('Dismissed'));
+  assert.ok(!shown.includes('Dismissed And Disliked'));
+
+  // The disliked escape hatch reveals Alien, which is only rated down — but not
+  // the one that was also hidden by hand. A hide outranks the chip.
+  const escaped = titlesOf(
+    sortMod.applyList(WITH_HIDDEN, {
+      filters: filters({ rating: ['disliked'] }),
+      settings: { hideDisliked: true },
+    })
+  );
+  assert.ok(escaped.includes('Alien'));
+  assert.ok(!escaped.includes('Dismissed And Disliked'));
+
+  // Turning the preference off doesn't un-hide either.
+  const withSettingOff = titlesOf(sortMod.applyList(WITH_HIDDEN, { settings: { hideDisliked: false } }));
+  assert.ok(!withSettingOff.includes('Dismissed'));
+});
+
+test('a hidden title is never offered as a recommendation', () => {
+  const exclude = rec.excludeSet(WITH_HIDDEN);
+  assert.ok(exclude.has('movie:6'));
+});
+
+test('hiding alone keeps a record alive through a prune', () => {
+  resetStore();
+  // Nothing but the hide: if isTracked ignored it, pruning would drop the
+  // record and the title would quietly come back.
+  store.setHidden('movie', 4242, true, { type: 'movie', id: 4242, title: 'Dismissed' });
+  assert.equal(store.getItem('movie', 4242).hidden, true);
+  assert.equal(store.pruneUntracked(), 0);
+  assert.equal(store.getItem('movie', 4242).hidden, true);
+
+  assert.deepEqual(store.hiddenItems().map((i) => i.id), [4242]);
+
+  // Un-hiding leaves an empty shell, which unhideAll cleans up for us.
+  assert.equal(store.unhideAll(), 1);
+  assert.equal(store.getItem('movie', 4242), null);
+  assert.deepEqual(store.hiddenItems(), []);
+});
+
+test('un-hiding keeps a title that has other state attached', () => {
+  resetStore();
+  store.setRating('movie', 550, 'up', { type: 'movie', id: 550, title: 'Fight Club' });
+  store.setHidden('movie', 550, true);
+  assert.equal(store.unhideAll(), 1);
+  // The rating outlives the hide — only records holding nothing else get pruned.
+  assert.equal(store.getItem('movie', 550).rating, 'up');
+  assert.equal(store.getItem('movie', 550).hidden, false);
+});
+
 /* ---------- paging ---------- */
 
 const many = (n) => Array.from({ length: n }, (_, i) => ({ id: i + 1 }));
@@ -1019,45 +1101,47 @@ test('missing scores parse to null rather than a fake number', () => {
 /* ---------- press-and-hold rating ---------- */
 
 const VIEWPORT = { width: 390, height: 844 };
-const POP = { width: 240, height: 68 };
+// Verdict row, the gap the fingertip sits in, then Hide.
+const POP = { width: 240, height: 180 };
+const ANCHOR = 95; // top of the popover to the middle of the gap
 
-test('the rating options sit above the poster when there is room', () => {
-  const tile = { top: 400, bottom: 640, left: 100, right: 280, width: 180 };
-  const spot = lp.placePopover(tile, POP, VIEWPORT);
-  assert.equal(spot.placement, 'above');
-  assert.equal(spot.y, 400 - 10 - POP.height);
-  // Centred on the tile.
-  assert.equal(spot.x, 100 + 90 - POP.width / 2);
+test('the options open around the finger, not around the tile', () => {
+  const spot = lp.placePopover({ x: 195, y: 500 }, POP, VIEWPORT, ANCHOR);
+  assert.equal(spot.placement, 'centred');
+  // The gap lands exactly on the press point, so the verdict row is just above
+  // the fingertip and Hide just below it.
+  assert.equal(spot.y + ANCHOR, 500);
+  assert.equal(spot.x + POP.width / 2, 195);
 });
 
-test('they flip below a poster too near the top to fit above', () => {
-  const tile = { top: 20, bottom: 260, left: 100, right: 280, width: 180 };
-  const spot = lp.placePopover(tile, POP, VIEWPORT);
-  assert.equal(spot.placement, 'below');
-  assert.equal(spot.y, 270);
+test('a press near the top of the screen pushes the options down', () => {
+  const spot = lp.placePopover({ x: 195, y: 40 }, POP, VIEWPORT, ANCHOR);
+  assert.equal(spot.y, 8);
+  assert.equal(spot.placement, 'shifted-down');
+  // Clamping moved the gap off the fingertip, which is exactly the case the
+  // "must slide before it counts" rule exists for.
+  assert.ok(spot.y + ANCHOR > 40);
 });
 
-test('they stay on screen for tiles in the edge columns', () => {
-  // Left column: centring would put x negative.
-  const left = lp.placePopover(
-    { top: 400, bottom: 640, left: 0, right: 180, width: 180 }, POP, VIEWPORT
-  );
+test('a press near the bottom pushes them up, still on screen', () => {
+  const spot = lp.placePopover({ x: 195, y: 830 }, POP, VIEWPORT, ANCHOR);
+  assert.equal(spot.placement, 'shifted-up');
+  assert.ok(spot.y + POP.height <= VIEWPORT.height - 8);
+});
+
+test('a press near a side edge keeps the options on screen', () => {
+  const left = lp.placePopover({ x: 12, y: 500 }, POP, VIEWPORT, ANCHOR);
   assert.equal(left.x, 8);
 
-  // Right column: centring would run off the right edge.
-  const right = lp.placePopover(
-    { top: 400, bottom: 640, left: 210, right: 390, width: 180 }, POP, VIEWPORT
-  );
+  const right = lp.placePopover({ x: 380, y: 500 }, POP, VIEWPORT, ANCHOR);
   assert.equal(right.x, VIEWPORT.width - POP.width - 8);
 });
 
-test('a very tall popover is still pinned inside the viewport', () => {
-  const spot = lp.placePopover(
-    { top: 10, bottom: 800, left: 100, right: 280, width: 180 },
-    { width: 240, height: 200 },
-    VIEWPORT
-  );
-  assert.ok(spot.y + 200 <= VIEWPORT.height, `bottom ${spot.y + 200} exceeds viewport`);
+test('a popover taller than the screen is still pinned inside it', () => {
+  const tall = { width: 240, height: 900 };
+  const spot = lp.placePopover({ x: 195, y: 400 }, tall, VIEWPORT, ANCHOR);
+  // Nothing fits, but the top edge is what has to stay reachable.
+  assert.equal(spot.y, 8);
 });
 
 test('the option under the finger is the one that gets picked', () => {

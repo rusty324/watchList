@@ -450,6 +450,36 @@ const RECS = {
   'tv:66732': [1396, 93405],
 };
 
+/* Recommendation-only filler. The real catalogue above is ten titles, which
+ * after excluding what the walkthrough has rated leaves a Top Picks pool of
+ * four — fewer than the eight on screen, so a shuffle would have nothing to
+ * swap in. These appear only in /recommendations responses (and open as normal
+ * films), never in search, discover or trending, so no other fixture-driven
+ * assertion sees them. */
+const FILLER_GENRES = [
+  [{ id: 18, name: 'Drama' }],
+  [{ id: 53, name: 'Thriller' }, { id: 18, name: 'Drama' }],
+  [{ id: 35, name: 'Comedy' }],
+  [{ id: 878, name: 'Science Fiction' }],
+];
+const FILLER = Object.fromEntries(
+  Array.from({ length: 24 }, (_, i) => {
+    const id = 800001 + i;
+    return [id, {
+      id,
+      title: `Recommended Film ${String(i + 1).padStart(2, '0')}`,
+      original_title: `Recommended Film ${String(i + 1).padStart(2, '0')}`,
+      original_language: 'en',
+      release_date: `${1990 + i}-06-01`,
+      poster_path: null,
+      overview: 'A fixture title that exists so Top Picks has a realistic pool to shuffle.',
+      vote_average: 7 - (i % 5) * 0.2,
+      popularity: 50 - i,
+      genres: FILLER_GENRES[i % FILLER_GENRES.length],
+    }];
+  })
+);
+
 /* ---------- routing ---------- */
 
 function episodesFor(tvId, seasonNumber) {
@@ -528,7 +558,11 @@ export function mockFetch(path, params = {}) {
   m = path.match(/^\/(movie|tv)\/(\d+)\/recommendations$/);
   if (m) {
     const ids = RECS[`${m[1]}:${m[2]}`] || [];
-    return delay({ results: ids.map(byId).filter(Boolean) });
+    // Each seed contributes a different overlapping slice of the filler, so
+    // scores vary the way real multi-seed recommendations do.
+    const offset = (Number(m[2]) % 7) * 2;
+    const filler = Object.values(FILLER).slice(offset, offset + 14).map((f) => asResult(f, 'movie'));
+    return delay({ results: [...ids.map(byId).filter(Boolean), ...filler] });
   }
 
   m = path.match(/^\/tv\/(\d+)\/season\/(\d+)$/);
@@ -543,7 +577,7 @@ export function mockFetch(path, params = {}) {
 
   m = path.match(/^\/movie\/(\d+)$/);
   if (m) {
-    const raw = MOVIES[m[1]];
+    const raw = MOVIES[m[1]] || FILLER[m[1]];
     if (!raw) return Promise.reject(new Error('not found'));
     const recIds = RECS[`movie:${m[1]}`] || [];
     return delay({

@@ -333,6 +333,66 @@ if (await page.locator('.search-filters').count()) {
 await page.waitForTimeout(1000);
 await shot('13-browse-recommendations');
 
+/* ---- 8a. shuffling Top Picks ---- */
+const topPicks = () => page.locator('.picks .tile .t-name').allTextContents();
+const trendingNow = () =>
+  page.locator('.section-title', { hasText: 'Trending' }).locator('xpath=following-sibling::div[1]')
+    .locator('.t-name').allTextContents();
+
+const picksBefore = await topPicks();
+const trendingBefore = await trendingNow();
+console.log('top picks ->', picksBefore.join(', '));
+if (picksBefore.length !== 8) problems.push(`expected 8 top picks, found ${picksBefore.length}`);
+if (!(await page.locator('.picks-shuffle').isVisible())) {
+  problems.push('the shuffle button is missing with a pool big enough to shuffle');
+}
+
+await page.locator('.picks-shuffle').click();
+await page.waitForTimeout(600);
+const picksAfter = await topPicks();
+console.log('after shuffle ->', picksAfter.join(', '));
+if (picksAfter.length !== 8) problems.push(`a shuffle left ${picksAfter.length} picks, not 8`);
+const repeated = picksAfter.filter((t) => picksBefore.includes(t));
+if (repeated.length) problems.push(`a shuffle handed back titles already on screen: ${repeated.join('|')}`);
+
+// Only the picks repaint; the rest of the page stays where it was.
+if ((await trendingNow()).join('|') !== trendingBefore.join('|')) {
+  problems.push('shuffling Top Picks changed the Trending row');
+}
+await shot('13a-browse-picks-shuffled');
+
+// A second shuffle avoids the second set in turn.
+await page.locator('.picks-shuffle').click();
+await page.waitForTimeout(600);
+const picksThird = await topPicks();
+if (picksThird.some((t) => picksAfter.includes(t))) {
+  problems.push('the second shuffle repeated titles from the first');
+}
+
+// The shuffle survives a trip to another tab and back.
+await page.click('.tab[data-tab="lists"]');
+await page.waitForTimeout(600);
+await page.click('.tab[data-tab="browse"]');
+await page.waitForTimeout(1200);
+if ((await topPicks()).join('|') !== picksThird.join('|')) {
+  problems.push('switching tabs undid the shuffle');
+}
+
+// Rating something resets to best-first for the new taste profile.
+await page.locator('.picks .tile').first().click();
+await page.waitForTimeout(1100);
+await page.click('.rating-btn.once');
+await page.waitForTimeout(300);
+await page.click('.rating-btn.once'); // and clear it again, leaving no trace
+await page.waitForTimeout(300);
+await page.goBack();
+await page.waitForTimeout(1400);
+const picksReset = await topPicks();
+console.log('after a rating change ->', picksReset.join(', '));
+if (picksReset.join('|') !== picksBefore.join('|')) {
+  problems.push('a rating change did not reset Top Picks to best-first');
+}
+
 /* ---- 9. lists ---- */
 await page.click('.tab[data-tab="lists"]');
 await page.waitForTimeout(600);

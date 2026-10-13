@@ -15,6 +15,7 @@ import { recommendationsFor } from './tmdb.js';
 const MAX_SEEDS = 40;
 const RANK_WINDOW = 40;
 const AFFINITY_WEIGHT = 0.3;
+export const PICK_POOL = 48;
 
 /**
  * How much each rating moves genre affinity.
@@ -116,6 +117,40 @@ export function rankByAffinity(items, affinity) {
     .map((entry) => entry.item);
 }
 
+/**
+ * Draw `count` picks from a ranked pool, weighted by score.
+ *
+ * Top Picks would otherwise never change: scoring is deterministic, so the same
+ * library always yields the same first eight. Sampling by score keeps strong
+ * matches turning up most often while still letting the rest of the pool
+ * through. `exclude` holds what's on screen now, so a shuffle never hands back
+ * any of the same titles — unless the pool is too small, when repeats beat a
+ * short row. `random` is injectable so tests can make the draw exact.
+ */
+export function samplePicks(candidates, count, { exclude = new Set(), random = Math.random } = {}) {
+  const keyOf = (c) => itemKey(c.item.type, c.item.id);
+  const fresh = candidates.filter((c) => !exclude.has(keyOf(c)));
+  const pool = fresh.length >= count ? fresh : candidates;
+
+  const remaining = [...pool];
+  const picked = [];
+  while (picked.length < count && remaining.length) {
+    // A floor keeps a near-zero score drawable; without it the bottom of the
+    // pool would never appear and this would just be a fixed top-N.
+    const weights = remaining.map((c) => Math.max(c.score, 0.05));
+    const total = weights.reduce((a, b) => a + b, 0);
+    let roll = random() * total;
+    let index = 0;
+    while (index < remaining.length - 1 && roll >= weights[index]) {
+      roll -= weights[index];
+      index++;
+    }
+    picked.push(remaining.splice(index, 1)[0]);
+  }
+  // Strongest first, so the row reads best-to-worst rather than in draw order.
+  return picked.sort((a, b) => b.score - a.score);
+}
+
 /** Titles the user has already dealt with, in one lookup set. */
 export function excludeSet(items) {
   const set = new Set();
@@ -168,5 +203,6 @@ export async function buildRecommendations() {
     .filter((rail) => rail.items.length >= 3)
     .slice(0, 5);
 
-  return { top: top.slice(0, 24), rails, seeds };
+  // Wider than the eight on screen, so there's something to shuffle into.
+  return { top: top.slice(0, PICK_POOL), rails, seeds };
 }

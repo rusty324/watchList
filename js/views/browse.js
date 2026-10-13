@@ -2,9 +2,9 @@
  * search field is empty. */
 
 import { h, icon, clear, fill, grid, skeletonGrid, emptyState, displayTitle, tile } from '../ui.js';
-import { state, getItem, hasKeys } from '../store.js';
+import { state, getItem, hasKeys, itemKey } from '../store.js';
 import { search, trending, hasTmdbKey } from '../tmdb.js';
-import { buildRecommendations, seedsFrom } from '../recommend.js';
+import { buildRecommendations, seedsFrom, samplePicks } from '../recommend.js';
 import { suppressed, applySearch, searchGenres, SEARCH_SORTS } from '../sort.js';
 import { openItem } from './detail.js';
 import { openSettings } from './settings.js';
@@ -14,6 +14,11 @@ const storedFor = (item) => getItem(item.type, item.id);
 let lastQuery = '';
 let searchTimer = null;
 let recCache = null;
+// The Top Picks currently on screen, once shuffled; null means the plain
+// best-first eight. Kept across renders so switching tabs doesn't undo a
+// shuffle, and reset with the cache so a new rating starts from the top again.
+let shownPicks = null;
+const PICKS_SHOWN = 8;
 
 // Applied to the results TMDB returned, not to the query — see applySearch.
 const searchUi = { type: 'all', genres: new Set(), sort: 'relevance', hideTracked: false };
@@ -21,6 +26,7 @@ let lastResults = [];
 
 export function invalidateRecommendations() {
   recCache = null;
+  shownPicks = null;
 }
 
 export function searchQuery() {
@@ -248,6 +254,24 @@ function paintResults(host) {
   );
 }
 
+const keyOf = (c) => itemKey(c.item.type, c.item.id);
+
+/**
+ * What the Top Picks row shows: the shuffled set if there is one, else the plain
+ * top of the pool. A pick hidden or disliked since the shuffle drops out, and
+ * the row is topped up from the pool in rank order so it never shows a gap.
+ */
+function currentPicks(pool) {
+  const allowed = new Set(pool.map(keyOf));
+  const kept = (shownPicks || []).filter((c) => allowed.has(keyOf(c)));
+  const keptKeys = new Set(kept.map(keyOf));
+  for (const c of pool) {
+    if (kept.length >= PICKS_SHOWN) break;
+    if (!keptKeys.has(keyOf(c))) kept.push(c);
+  }
+  return kept;
+}
+
 function renderNeedsKey(host) {
   fill(host, 
     emptyState({
@@ -286,11 +310,45 @@ async function renderHome(host) {
   }
 
   if (recCache?.top?.length) {
-    sections.push(
-      h('h2', { class: 'section-title' }, 'Top picks for you'),
-      h('p', { class: 'section-sub' }, `Based on ${recCache.seeds.length} title${recCache.seeds.length === 1 ? '' : 's'} you liked`),
-      grid(visible(recCache.top.map((c) => c.item)).slice(0, 8), storedFor, openItem)
+    // Only this grid repaints on a shuffle, so Trending and the rails below
+    // keep their place and the page doesn't jump.
+    const picksHost = h('div', { class: 'picks' });
+    const pool = () => recCache.top.filter((c) => !suppressed(storedFor(c.item), state.settings));
+    const paintPicks = () => fill(picksHost, grid(currentPicks(pool()).map((c) => c.item), storedFor, openItem));
+
+    const shuffle = h(
+      'button',
+      {
+        type: 'button',
+        class: 'icon-btn picks-shuffle',
+        'aria-label': 'Shuffle top picks',
+        // With eight or fewer candidates every shuffle shows the same titles,
+        // and a button that visibly does nothing is worse than no button.
+        hidden: pool().length <= PICKS_SHOWN,
+        onclick: () => {
+          const exclude = new Set((shownPicks || currentPicks(pool())).map(keyOf));
+          shownPicks = samplePicks(pool(), PICKS_SHOWN, { exclude });
+          // Restart the spin even on rapid repeat taps.
+          shuffle.classList.remove('spin');
+          void shuffle.offsetWidth;
+          shuffle.classList.add('spin');
+          paintPicks();
+        },
+      },
+      icon('refresh')
     );
+
+    sections.push(
+      h('div', { class: 'picks-head' }, h('h2', { class: 'section-title' }, 'Top picks for you'), shuffle),
+      h(
+        'p',
+        { class: 'section-sub' },
+        `Based on ${recCache.seeds.length} title${recCache.seeds.length === 1 ? '' : 's'} you liked` +
+          (shuffle.hidden ? '' : ' · tap ↻ for a different mix')
+      ),
+      picksHost
+    );
+    paintPicks();
 
     for (const rail of recCache.rails) {
       sections.push(

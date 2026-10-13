@@ -251,6 +251,23 @@ equivalent** — a long-press can't have one — so it's an accelerator rather t
 a new capability; the detail sheet's rating row offers the same three verdicts
 to everyone.
 
+### Shuffling Top Picks
+
+**Tap ↻ beside "Top picks for you"** for a different eight. Picks are scored,
+so without this the same library always produces the same row — recomputing
+alone would change nothing.
+
+A shuffle draws from the top 48 candidates, weighted by score: strong matches
+still turn up most often, but the rest of the pool gets a look in, and it never
+hands back any of the eight you were just shown. It needs no network — TMDB's
+recommendations for a title don't change day to day — and only the picks
+repaint, so the rows below stay where they were.
+
+The shuffle survives switching tabs. Rating anything resets to the plain
+best-first eight, since your taste has just changed. With eight or fewer
+candidates — early on, with only a few likes — the button is hidden, because
+every shuffle would show the same titles.
+
 ### Playlists
 
 A playlist is a handful of titles **in an order you choose** — a run to work

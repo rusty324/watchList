@@ -1155,6 +1155,73 @@ test('anime detection is narrow enough not to fire on lookalikes', () => {
   assert.equal(anilist.looksLikeAnime(null), false);
 });
 
+/* ---------- shuffling top picks ---------- */
+
+/** A seeded generator, so a draw is the same on every run. */
+function seeded(seed) {
+  let s = seed >>> 0;
+  return () => {
+    s = (s * 1664525 + 1013904223) >>> 0;
+    return s / 2 ** 32;
+  };
+}
+
+// Twenty candidates, scores falling from 2.0 to 0.1, as scoreCandidates emits.
+const POOL = Array.from({ length: 20 }, (_, i) => ({
+  item: { type: 'movie', id: i + 1, title: `Pick ${i + 1}` },
+  score: 2 - i * 0.1,
+}));
+const keysOf = (picks) => picks.map((p) => `movie:${p.item.id}`);
+
+test('a shuffle draws the requested number, no repeats, best first', () => {
+  const picks = rec.samplePicks(POOL, 8, { random: seeded(1) });
+  assert.equal(picks.length, 8);
+  assert.equal(new Set(keysOf(picks)).size, 8);
+  for (let i = 1; i < picks.length; i++) assert.ok(picks[i - 1].score >= picks[i].score);
+  // The same seed gives the same draw, which is what makes the tests exact.
+  assert.deepEqual(keysOf(rec.samplePicks(POOL, 8, { random: seeded(1) })), keysOf(picks));
+});
+
+test('a shuffle never hands back what is already on screen', () => {
+  const onScreen = new Set(keysOf(POOL.slice(0, 8)));
+  for (let seed = 1; seed <= 25; seed++) {
+    const picks = rec.samplePicks(POOL, 8, { exclude: onScreen, random: seeded(seed) });
+    assert.equal(picks.length, 8);
+    for (const key of keysOf(picks)) assert.ok(!onScreen.has(key), `${key} came back`);
+  }
+});
+
+test('stronger matches turn up more often, but not only them', () => {
+  const counts = new Map();
+  const random = seeded(42);
+  for (let draw = 0; draw < 2000; draw++) {
+    for (const key of keysOf(rec.samplePicks(POOL, 8, { random }))) {
+      counts.set(key, (counts.get(key) || 0) + 1);
+    }
+  }
+  // Weighting works: the top candidate beats the bottom one by a wide margin.
+  assert.ok(counts.get('movie:1') > 2 * (counts.get('movie:20') || 0));
+  // And it is not a fixed top-N: every candidate surfaces at some point.
+  assert.equal(counts.size, 20);
+});
+
+test('a pool too small to avoid repeats still fills the row', () => {
+  const small = POOL.slice(0, 10);
+  const onScreen = new Set(keysOf(small.slice(0, 8)));
+  // Only two fresh titles exist; a short row of two would look broken, so
+  // repeats are allowed instead.
+  const picks = rec.samplePicks(small, 8, { exclude: onScreen, random: seeded(3) });
+  assert.equal(picks.length, 8);
+  assert.equal(new Set(keysOf(picks)).size, 8);
+  // And a pool smaller than the row just returns what there is.
+  assert.equal(rec.samplePicks(POOL.slice(0, 3), 8, { random: seeded(3) }).length, 3);
+  assert.deepEqual(rec.samplePicks([], 8), []);
+});
+
+test('the pick pool is wider than the row, so there is something to shuffle into', () => {
+  assert.ok(rec.PICK_POOL >= 40);
+});
+
 /* ---------- sync merge ---------- */
 
 test('sync keeps the newest edit per title, not per device', () => {

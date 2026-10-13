@@ -286,6 +286,18 @@ svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; 
 .hidden-row .h-year { flex: 0 0 auto; color: var(--fg-faint); font-size: 12.5px; }
 .hidden-row .chip { padding: 5px 11px; font-size: 12.5px; }
 
+/* Top Picks heading with its shuffle button. The heading's own top margin is
+ * moved to the row so the button lines up with the text, not the gap above. */
+.picks-head { display: flex; align-items: center; gap: 10px; margin-top: 22px; }
+.picks-head:first-child { margin-top: 6px; } /* matches .section-title:first-child */
+.picks-head .section-title { flex: 1; margin: 0; }
+.picks-head + .section-sub { margin-top: 4px; }
+.picks-shuffle.spin svg { animation: picks-spin 0.45s var(--ease); }
+@keyframes picks-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .picks-shuffle.spin svg { animation: none; }
+}
+
 /* ---------- playlists ---------- */
 
 .pl-index { display: flex; flex-direction: column; gap: 10px; }

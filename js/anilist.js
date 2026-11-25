@@ -13,7 +13,7 @@
  * sync would each fragment across two id spaces.
  */
 
-import { cached } from './idb.js';
+import { cached, cacheGet } from './idb.js';
 import { search as tmdbSearch } from './tmdb.js';
 import { isMock, mockAnilist } from './mock.js';
 
@@ -286,39 +286,82 @@ export async function resolveToTmdb(entry) {
 
 /* ---------- matching against the library ---------- */
 
-/** Loose enough to survive punctuation and spacing differences between sources. */
+/**
+ * Loose enough to survive punctuation and spacing differences between sources.
+ *
+ * NFKC first, so full-width forms fold to their plain equivalents, and CJK
+ * punctuation (U+3000-303F) is excluded from what is kept: TMDB and AniList
+ * spell the same Japanese title with different tildes and brackets, and the two
+ * spellings must compare equal.
+ */
 function titleKey(title) {
   return String(title || '')
+    .normalize('NFKC')
     .toLowerCase()
-    .replace(/[^a-z0-9　-鿿가-힯]+/g, '');
+    .replace(/[^a-z0-9぀-ヿ㐀-䶿一-鿿가-힯]+/g, '');
 }
+
+/** The key with any season marker dropped: "show season 2" -> "show". */
+function baseKey(title) {
+  return titleKey(stripSeasonMarkers(title));
+}
+
+const TITLE_FIELDS = ['title', 'originalTitle', 'nativeTitle'];
 
 /**
- * Title -> year for every stored item that `include` accepts, so an entry can be
- * matched against the library without a TMDB id.
+ * What an entry can be matched against, built from the stored items `include`
+ * accepts.
+ *
+ *   ids   AniList ids stamped on a record when you acted on it through an AniList
+ *         tile. An exact link, so it is checked first and needs no guessing.
+ *   full  every stored title -> year, for a plain title match.
+ *   base  every stored title with its season marker dropped, remembering whether
+ *         any carried one - see dropMatching.
  */
-function libraryTitles(storedItems, include) {
-  const titles = new Map();
+function libraryIndex(storedItems, include) {
+  const ids = new Set();
+  const full = new Map();
+  const base = new Map();
   for (const item of Object.values(storedItems || {})) {
     if (!include(item)) continue;
-    for (const title of [item.title, item.originalTitle]) {
-      const key = titleKey(title);
-      if (key) titles.set(key, item.year ?? null);
+    if (item.anilistId != null) ids.add(item.anilistId);
+    for (const field of TITLE_FIELDS) {
+      const raw = item[field];
+      const key = titleKey(raw);
+      if (!key) continue;
+      full.set(key, item.year ?? null);
+      const bare = baseKey(raw);
+      if (bare) base.set(bare, base.get(bare) || bare !== key);
     }
   }
-  return titles;
+  return { ids, full, base, size: ids.size + full.size };
 }
 
-function dropMatching(entries, titles) {
-  if (!titles.size) return entries;
+function dropMatching(entries, index) {
+  if (!index.size) return entries;
   return entries.filter((entry) => {
-    for (const title of [entry.title, entry.originalTitle]) {
-      const key = titleKey(title);
-      if (!key || !titles.has(key)) continue;
-      const storedYear = titles.get(key);
-      // Anime release years drift by one between sources (season vs air date).
-      if (storedYear == null || entry.year == null) return false;
-      if (Math.abs(storedYear - entry.year) <= 1) return false;
+    if (entry.anilistId != null && index.ids.has(entry.anilistId)) return false;
+
+    for (const field of TITLE_FIELDS) {
+      const raw = entry[field];
+      const key = titleKey(raw);
+      if (!key) continue;
+
+      if (index.full.has(key)) {
+        const storedYear = index.full.get(key);
+        // Anime release years drift by one between sources (season vs air date).
+        if (storedYear == null || entry.year == null) return false;
+        if (Math.abs(storedYear - entry.year) <= 1) return false;
+      }
+
+      // The same show under another season's name. A later cour is its own
+      // AniList entry whose title differs only by "Season 2" or "Part 2", and
+      // its year is later too, so neither the plain match nor the year check
+      // can see it. Only taken when a marker is involved on one side or the
+      // other: a bare title match across many years is a remake (Fruits Basket,
+      // 2001 and 2019) and must not be merged.
+      const bare = baseKey(raw);
+      if (bare && index.base.has(bare) && (bare !== key || index.base.get(bare))) return false;
     }
     return true;
   });
@@ -336,10 +379,7 @@ function dropMatching(entries, titles) {
  * Hidden counts as dealt with, same as in excludeSet.
  */
 export function rejectSeen(entries, storedItems) {
-  return dropMatching(
-    entries,
-    libraryTitles(storedItems, (i) => i.watched || i.inWatchlist || i.rating || i.hidden)
-  );
+  return dropMatching(entries, libraryIndex(storedItems, isSeen));
 }
 
 /**
@@ -351,7 +391,34 @@ export function rejectSeen(entries, storedItems) {
  * tile's own `al…` id has no stored record for suppressed() to find.
  */
 export function rejectHidden(entries, storedItems) {
-  return dropMatching(entries, libraryTitles(storedItems, (i) => i.hidden));
+  return dropMatching(entries, libraryIndex(storedItems, isHiddenItem));
+}
+
+export const isSeen = (item) =>
+  Boolean(item?.watched || item?.inWatchlist || item?.rating || item?.hidden);
+export const isHiddenItem = (item) => Boolean(item?.hidden);
+
+/**
+ * Drop entries that are already resolved to a TMDB title you've acted on.
+ *
+ * resolveToTmdb caches which TMDB title each AniList entry matched, and that is
+ * the one place the app actually knows the two are the same show - whatever
+ * either source chooses to call it. Reading it back costs only local cache
+ * lookups, no requests, and it covers anything hidden or rated before records
+ * were stamped with an AniList id. An entry that was never resolved has no link
+ * yet, and falls through to the title matching above.
+ */
+export async function dropResolved(entries, storedItems, include) {
+  const links = await Promise.all(
+    entries.map((entry) =>
+      entry.anilistId == null ? null : cacheGet(`anilist:tmdb:${entry.anilistId}`)
+    )
+  );
+  return entries.filter((entry, i) => {
+    const link = links[i];
+    if (!link) return true;
+    return !include(storedItems?.[`${link.type}:${link.id}`]);
+  });
 }
 
 /**

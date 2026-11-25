@@ -8,7 +8,15 @@
 import { h, icon, clear, fill, grid, skeletonGrid, emptyState } from '../ui.js';
 import { state, getItem, hasKeys } from '../store.js';
 import { discoverByGenre, hasTmdbKey } from '../tmdb.js';
-import { browseAnime, browseByTag, rejectSeen, rejectHidden } from '../anilist.js';
+import {
+  browseAnime,
+  browseByTag,
+  rejectSeen,
+  rejectHidden,
+  dropResolved,
+  isSeen,
+  isHiddenItem,
+} from '../anilist.js';
 import { GENRES, findGenre, availableTypes, genreIdFor } from '../genres.js';
 import { excludeSet, genreAffinity, rankByAffinity } from '../recommend.js';
 import { suppressed } from '../sort.js';
@@ -211,6 +219,10 @@ async function load(host, genre) {
     // narrower rule: a hide holds there too, as suppressed() makes it for TMDB.
     if (genre.source === 'anilist') {
       batch = ui.unseenOnly ? rejectSeen(batch, state.items) : rejectHidden(batch, state.items);
+      // Then the exact link, for anything already resolved to a TMDB title:
+      // local cache reads only, and it covers records that predate stamping.
+      batch = await dropResolved(batch, state.items, ui.unseenOnly ? isSeen : isHiddenItem);
+      if (token !== loadToken) return;
     }
 
     for (const item of batch) {

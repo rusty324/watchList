@@ -1288,14 +1288,42 @@ await holdAndPick(animeTile('Spirited Away'), 'hide');
 if ((await animeNames()).includes('Spirited Away')) {
   problems.push('a hidden TMDB-resolved anime is still in the Anime grid under Show all');
 }
-await page.reload({ waitUntil: 'networkidle' });
-await page.waitForTimeout(1500);
-if (/Show all/.test(await page.locator('.chips .chip[data-seen="toggle"]').textContent())) {
-  await page.locator('.chips .chip', { hasText: 'Show all' }).click();
-  await page.waitForTimeout(1100);
+// What press-and-hold wrote: the AniList id rides along, because the app knows
+// the link here and shouldn't have to guess it from titles later.
+const stampedRecord = () =>
+  page.evaluate(() => JSON.parse(localStorage.getItem('wl.data.v1')).items['movie:129']);
+if ((await stampedRecord())?.anilistId == null) {
+  problems.push('hiding from an AniList tile did not record which AniList entry it was');
 }
-if ((await animeNames()).includes('Spirited Away')) {
-  problems.push('a hidden TMDB-resolved anime came back after a reload');
+
+// Then make the stored record stop matching by name, the ways real data does:
+// TMDB names the show differently, or it was hidden before ids were stamped.
+const reloadAnime = async () => {
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.waitForTimeout(1500);
+  if (/Show all/.test(await page.locator('.chips .chip[data-seen="toggle"]').textContent())) {
+    await page.locator('.chips .chip', { hasText: 'Show all' }).click();
+    await page.waitForTimeout(1100);
+  }
+};
+const tamper = (patch) =>
+  page.evaluate((fields) => {
+    const data = JSON.parse(localStorage.getItem('wl.data.v1'));
+    Object.assign(data.items['movie:129'], fields);
+    for (const [k, v] of Object.entries(fields)) if (v === undefined) delete data.items['movie:129'][k];
+    localStorage.setItem('wl.data.v1', JSON.stringify(data));
+  }, patch);
+
+for (const [label, patch] of [
+  ['as hidden', {}],
+  ['names no longer match (id still stamped)', { title: 'A Wholly Different Name', originalTitle: 'xx', year: 1950 }],
+  ['hidden before ids were stamped (names AND id gone)', { anilistId: undefined }],
+]) {
+  await tamper(patch);
+  await reloadAnime();
+  const shown = (await animeNames()).includes('Spirited Away');
+  console.log(`hidden anime, ${label} ->`, shown ? 'STILL SHOWN' : 'hidden');
+  if (shown) problems.push(`a hidden anime came back: ${label}`);
 }
 await shot('25c-anime-hidden-holds');
 // Leave the fixtures as they were for everything after this.

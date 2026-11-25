@@ -565,6 +565,7 @@ export function snapshot(meta) {
     overview: meta.overview,
     imdbId: meta.imdbId,
     tmdbScore: meta.tmdbScore,
+    ...(meta.anilistId != null ? { anilistId: meta.anilistId } : {}),
     ...(meta.type === 'tv'
       ? {
           seasonMeta: meta.seasonMeta,

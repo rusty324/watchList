@@ -1239,6 +1239,87 @@ test('a hidden anime is dropped from the grid, including under Show all', () => 
   );
 });
 
+/* Hidden titles that the Anime grid used to let through. Each case is a way the
+ * stored record and the AniList entry can name the same show differently. */
+
+const KAGUYA = {
+  anilistId: 101177,
+  title: 'Kaguya-sama: Love is War',
+  originalTitle: 'Kaguya-sama wa Kokurasetai',
+  nativeTitle: 'かぐや様は告らせたい',
+  year: 2019,
+};
+const hiddenAs = (record) => ({ 'tv:1': { hidden: true, ...record } });
+
+test('a hidden show is matched by the AniList id when the record carries one', () => {
+  // Nothing about the titles lines up — the id is the whole link.
+  const stored = hiddenAs({ title: 'Totally Different', year: 2001, anilistId: 101177 });
+  assert.equal(anilist.rejectHidden([KAGUYA], stored).length, 0);
+  // A different id with no matching title survives.
+  assert.equal(anilist.rejectHidden([{ ...KAGUYA, anilistId: 5, title: 'Other' }], stored).length, 1);
+});
+
+test('the native-script title counts as a match, whichever side is English', () => {
+  // TMDB's English name differs from AniList's, so only the native script
+  // lines up — and AniList keeps that in nativeTitle, which was never compared.
+  const stored = hiddenAs({ title: 'Love Is War (TMDB name)', originalTitle: 'かぐや様は告らせたい', year: 2019 });
+  assert.equal(anilist.rejectHidden([KAGUYA], stored).length, 0);
+});
+
+test('the same Japanese title spelled with different punctuation still matches', () => {
+  // TMDB writes a full-width tilde where AniList writes a wave dash.
+  const stored = hiddenAs({ originalTitle: 'かぐや様は告らせたい～天才たちの恋愛頭脳戦～', year: 2019 });
+  const entry = { title: 'Something Else', nativeTitle: 'かぐや様は告らせたい〜天才たちの恋愛頭脳戦〜', year: 2019 };
+  assert.equal(anilist.rejectHidden([entry], stored).length, 0);
+});
+
+test('hiding a show also hides its other seasons, which AniList lists separately', () => {
+  const stored = hiddenAs({ title: KAGUYA.title, year: 2019 });
+  for (const title of [
+    'Kaguya-sama: Love is War Season 2',
+    'Kaguya-sama: Love is War 2nd Season',
+    'Kaguya-sama: Love is War Part 2',
+    'Kaguya-sama: Love is War - The Final Season',
+  ]) {
+    // A later season is later too, so the year check alone would never see it.
+    assert.equal(anilist.rejectHidden([{ title, year: 2022 }], stored).length, 0, title);
+  }
+  // Hiding the later season hides the first as well.
+  const hidSeasonTwo = hiddenAs({ title: 'Kaguya-sama: Love is War Season 2', year: 2020 });
+  assert.equal(anilist.rejectHidden([{ title: KAGUYA.title, year: 2019 }], hidSeasonTwo).length, 0);
+});
+
+test('a remake with the same name is not mistaken for the show you hid', () => {
+  // Fruits Basket, 2001 and 2019: the same bare title, eighteen years apart.
+  const stored = hiddenAs({ title: 'Fruits Basket', year: 2001 });
+  assert.equal(anilist.rejectHidden([{ title: 'Fruits Basket', year: 2019 }], stored).length, 1);
+  // ...and the season rule does not reach across something merely similar.
+  assert.equal(anilist.rejectHidden([{ title: 'Fruits Basket Prelude', year: 2022 }], stored).length, 1);
+  // Bare trailing digits are part of a title, not a season.
+  const gate = hiddenAs({ title: 'Steins;Gate', year: 2011 });
+  assert.equal(anilist.rejectHidden([{ title: 'Steins;Gate 0', year: 2018 }], gate).length, 1);
+});
+
+test('a title already resolved to TMDB is recognised without any title matching', async () => {
+  const idb = await import('../js/idb.js');
+  // What resolveToTmdb leaves behind when you hide or rate from the grid.
+  await idb.cacheSet('anilist:tmdb:424242', { type: 'tv', id: 99 }, 60_000);
+  const entries = [
+    { anilistId: 424242, title: 'Nothing In Common', year: 1990 },
+    { anilistId: 7, title: 'Never Resolved', year: 1990 },
+  ];
+  const stored = { 'tv:99': { title: 'Unrelated English Name', hidden: true } };
+
+  const left = await anilist.dropResolved(entries, stored, anilist.isHiddenItem);
+  assert.deepEqual(left.map((e) => e.anilistId), [7]);
+
+  // Resolved, but not hidden: it stays.
+  const notHidden = { 'tv:99': { title: 'Unrelated English Name', rating: 'up' } };
+  assert.equal((await anilist.dropResolved(entries, notHidden, anilist.isHiddenItem)).length, 2);
+  // ...though "New to me" counts a rating as dealt with.
+  assert.equal((await anilist.dropResolved(entries, notHidden, anilist.isSeen)).length, 1);
+});
+
 test('adopting moves what you said onto the TMDB record and clears the old one', () => {
   resetStore();
   store.setRating('tv', 'al777', 'up', anilist.snapshotAnime(NO_TMDB));

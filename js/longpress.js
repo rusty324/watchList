@@ -171,7 +171,16 @@ async function commit(item, kind) {
       target = match;
       // Minimal metadata on purpose: opening the title later refreshes it from
       // TMDB, and an AniList cover shouldn't be persisted as the poster.
-      meta = { type: match.type, id: match.id, title: item.title, year: item.year };
+      meta = {
+        type: match.type,
+        id: match.id,
+        title: item.title,
+        year: item.year,
+        // The one place the app knows these are the same show, whatever either
+        // source calls it. The Anime grid uses it to keep a hidden or rated
+        // title out, instead of guessing from titles.
+        anilistId: item.anilistId,
+      };
       // Tracked under its AniList id before TMDB gained an entry? Bring that
       // over, so there is only ever one record.
       adoptItemState(item, match, meta);

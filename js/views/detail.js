@@ -66,6 +66,7 @@ function openAnime(entry) {
         id: match.id,
         title: entry.title,
         year: entry.year,
+        anilistId: entry.anilistId,
       });
       // Swap this placeholder sheet for the real one rather than stacking two.
       api.close();
@@ -102,6 +103,8 @@ export function openMovie(id, hint) {
         fill(api.body, failure(err));
         return;
       }
+      // Opened from an AniList tile: everything this sheet saves carries the link.
+      if (hint?.source === 'anilist') meta.anilistId = hint.anilistId;
 
       // Refresh whatever metadata we already had stored, without claiming this
       // as a user edit for sync purposes.
@@ -294,6 +297,7 @@ export function openTv(id, hint) {
         fill(api.body, failure(err));
         return;
       }
+      if (hint?.source === 'anilist') meta.anilistId = hint.anilistId;
 
       // Season counts drive the percentage, so store them before anything reads
       // progress — otherwise the first render divides by zero episodes.

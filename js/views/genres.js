@@ -8,7 +8,7 @@
 import { h, icon, clear, fill, grid, skeletonGrid, emptyState } from '../ui.js';
 import { state, getItem, hasKeys } from '../store.js';
 import { discoverByGenre, hasTmdbKey } from '../tmdb.js';
-import { browseAnime, browseByTag, rejectSeen } from '../anilist.js';
+import { browseAnime, browseByTag, rejectSeen, rejectHidden } from '../anilist.js';
 import { GENRES, findGenre, availableTypes, genreIdFor } from '../genres.js';
 import { excludeSet, genreAffinity, rankByAffinity } from '../recommend.js';
 import { suppressed } from '../sort.js';
@@ -207,7 +207,11 @@ async function load(host, genre) {
 
     // AniList entries have no TMDB id yet, so the id-keyed exclusion below
     // can't see them — they need matching by title instead.
-    if (genre.source === 'anilist' && ui.unseenOnly) batch = rejectSeen(batch, state.items);
+    // rejectSeen already covers hidden titles, so "Show all" only needs the
+    // narrower rule: a hide holds there too, as suppressed() makes it for TMDB.
+    if (genre.source === 'anilist') {
+      batch = ui.unseenOnly ? rejectSeen(batch, state.items) : rejectHidden(batch, state.items);
+    }
 
     for (const item of batch) {
       const key = `${item.type}:${item.id}`;

@@ -8,6 +8,7 @@
 import { h, icon, fill, openSheet, posterBox, displayTitle, toast } from '../ui.js';
 import { profileUrl, posterUrl } from '../tmdb.js';
 import { genreKeyFromName } from '../genres.js';
+import { snapshotAnime } from '../anilist.js';
 import {
   state,
   getItem,
@@ -546,6 +547,11 @@ function initials(name) {
  * lists render (and sort) offline without re-fetching every title.
  */
 export function snapshot(meta) {
+  // An AniList-only title has no TMDB record to refresh itself from, so its
+  // stored copy has to carry everything — and `source`/`anilistId` above all,
+  // since they are what makes the Lists tab reopen it as an AniList sheet
+  // rather than asking TMDB for an id it has never heard of.
+  if (meta.source === 'anilist') return snapshotAnime(meta);
   return {
     type: meta.type,
     id: meta.id,

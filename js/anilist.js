@@ -294,6 +294,37 @@ function titleKey(title) {
 }
 
 /**
+ * Title -> year for every stored item that `include` accepts, so an entry can be
+ * matched against the library without a TMDB id.
+ */
+function libraryTitles(storedItems, include) {
+  const titles = new Map();
+  for (const item of Object.values(storedItems || {})) {
+    if (!include(item)) continue;
+    for (const title of [item.title, item.originalTitle]) {
+      const key = titleKey(title);
+      if (key) titles.set(key, item.year ?? null);
+    }
+  }
+  return titles;
+}
+
+function dropMatching(entries, titles) {
+  if (!titles.size) return entries;
+  return entries.filter((entry) => {
+    for (const title of [entry.title, entry.originalTitle]) {
+      const key = titleKey(title);
+      if (!key || !titles.has(key)) continue;
+      const storedYear = titles.get(key);
+      // Anime release years drift by one between sources (season vs air date).
+      if (storedYear == null || entry.year == null) return false;
+      if (Math.abs(storedYear - entry.year) <= 1) return false;
+    }
+    return true;
+  });
+}
+
+/**
  * Drop AniList entries the user has already dealt with.
  *
  * The usual exclusion in recommend.js keys on `type:tmdbId`, which an
@@ -301,29 +332,57 @@ function titleKey(title) {
  * silently do nothing on the Anime tile. Matching on title and year instead
  * keeps it free: resolving every tile to a TMDB id up front would be one search
  * per tile, which is exactly what the lazy resolution exists to avoid.
+ *
+ * Hidden counts as dealt with, same as in excludeSet.
  */
 export function rejectSeen(entries, storedItems) {
-  const seen = new Map();
-  for (const item of Object.values(storedItems || {})) {
-    if (!item.watched && !item.inWatchlist && !item.rating) continue;
-    for (const title of [item.title, item.originalTitle]) {
-      const key = titleKey(title);
-      if (key) seen.set(key, item.year ?? null);
-    }
-  }
-  if (!seen.size) return entries;
+  return dropMatching(
+    entries,
+    libraryTitles(storedItems, (i) => i.watched || i.inWatchlist || i.rating || i.hidden)
+  );
+}
 
-  return entries.filter((entry) => {
-    for (const title of [entry.title, entry.originalTitle]) {
-      const key = titleKey(title);
-      if (!key || !seen.has(key)) continue;
-      const storedYear = seen.get(key);
-      // Anime release years drift by one between sources (season vs air date).
-      if (storedYear == null || entry.year == null) return false;
-      if (Math.abs(storedYear - entry.year) <= 1) return false;
-    }
-    return true;
-  });
+/**
+ * Drop only the entries the user has hidden.
+ *
+ * Separate from rejectSeen because a hide has to hold under "Show all" too —
+ * exactly as suppressed() keeps hidden TMDB titles out of every grid. Without
+ * it, an anime that resolves to TMDB and is hidden comes straight back: the
+ * tile's own `al…` id has no stored record for suppressed() to find.
+ */
+export function rejectHidden(entries, storedItems) {
+  return dropMatching(entries, libraryTitles(storedItems, (i) => i.hidden));
+}
+
+/**
+ * What to store for an AniList entry that has no TMDB id.
+ *
+ * Everything the sheet needs to draw it again, because a stored copy is all that
+ * remains once the grid it came from is gone — the Lists tab reopens it from
+ * here. Unlike the TMDB path the cover URL is kept: there is no TMDB poster to
+ * refresh it from later.
+ */
+export function snapshotAnime(entry) {
+  return {
+    source: 'anilist',
+    anilistId: entry.anilistId,
+    type: entry.type,
+    id: entry.id,
+    title: entry.title,
+    originalTitle: entry.originalTitle,
+    nativeTitle: entry.nativeTitle,
+    format: entry.format,
+    originalLanguage: entry.originalLanguage || 'ja',
+    foreign: entry.foreign,
+    year: entry.year,
+    poster: entry.poster,
+    genres: entry.genres,
+    overview: entry.overview,
+    episodes: entry.episodes,
+    anilistScore: entry.anilistScore,
+    studio: entry.studio,
+    tags: entry.tags,
+  };
 }
 
 /* ---------- enrichment ---------- */

@@ -243,7 +243,8 @@ already set undoes it, the same as tapping it twice in the detail sheet.
 
 Works on every poster grid — Browse, Genres and Lists. Anime tiles from the
 AniList grid have no TMDB id until they're opened, so releasing on an option
-looks up the match first and tells you if there isn't one.
+looks up the match first. If TMDB has no entry the title is tracked under its
+AniList id instead, so there is no anime you can't rate or hide.
 
 Two things it deliberately doesn't do. There's **no haptic tap**: WebKit never
 shipped the Vibration API, so the feedback is visual. And it has **no keyboard
@@ -359,10 +360,11 @@ score replaces the Rotten Tomatoes cell** (RT essentially never scores anime),
 the studio joins the facts line, and AniList tags like *Iyashikei* appear beside
 the TMDB genres, tinted blue to show they're from a different source.
 
-TMDB ids stay the app's primary key — AniList is a supplement, never a second
-identity, or watch state, watchlists, providers and sync would each split across
-two id spaces. An AniList tile resolves to its TMDB entry when you tap it, not
-while the grid renders, so a screen of anime costs one request rather than forty.
+TMDB ids stay the app's primary key wherever there is one — AniList is a
+supplement, not a second identity for anything TMDB knows, or watch state,
+watchlists, providers and sync would each split across two id spaces. An AniList
+tile resolves to its TMDB entry when you tap it, not while the grid renders, so
+a screen of anime costs one request rather than forty.
 
 **Cours are collapsed into one entry per show.** AniList gives each cour its own
 record — *Attack on Titan*, *…Season 2*, *…The Final Season* — while TMDB models
@@ -371,9 +373,23 @@ it. Later cours are detected through AniList's `PREQUEL` relations and folded
 away. A *film* that follows a series (Demon Slayer's *Mugen Train*) has a TV
 prequel too but is genuinely its own TMDB entry, so it survives the collapse.
 
-Anime that TMDB has never heard of — obscure OVAs, very new shows — opens a
-read-only AniList sheet with its score, studio, synopsis and a link out. It
-can't be rated or listed, and says so: tracking is keyed on TMDB ids.
+**Anime TMDB has never heard of** — obscure OVAs, very new shows — opens an
+AniList sheet with its score, studio, synopsis and a link out, and you can
+**rate it, hide it, add it to your watchlist and mark it watched** like anything
+else. Press-and-hold works on its tile too. What it lacks is TMDB's data: no
+episode list, cast or where-to-watch, and it can't go in a playlist or seed
+recommendations, all of which need a TMDB id. The sheet says so.
+
+These are stored under their own id, `al129` rather than a number, so they can't
+collide with a TMDB title and everything that looks a title up by id finds them
+unchanged. The stored copy keeps the cover and the AniList details, because
+there is no TMDB record to refresh them from, and the Lists tab reopens it from
+there.
+
+If TMDB later gains an entry, the next time you open that title what you'd said
+about it moves onto the TMDB record, so you never end up with two. TMDB's own
+answers win where both exist. The old record is cleared rather than deleted —
+titles have no tombstones, so a delete would just come back from your Gist.
 
 **AniDB was considered and rejected**: it sends no CORS headers, needs a
 registered client id on every request, and allows one request per two seconds

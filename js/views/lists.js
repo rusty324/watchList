@@ -23,6 +23,7 @@ import {
   indexRegion,
   needsCheck,
   checkedCount,
+  isCheckable,
   platformOptions,
   backfillAvailability,
 } from '../providers.js';
@@ -138,15 +139,18 @@ export function renderLists(root, segments) {
    * hundred requests the moment someone opens the Lists tab.
    */
   function availabilityNote(tracked) {
-    if (!tracked.length || !hasTmdbKey()) return null;
+    // Only titles with a TMDB id can be looked up; the rest would sit in the
+    // count forever.
+    const checkableTitles = tracked.filter(isCheckable);
+    if (!checkableTitles.length || !hasTmdbKey()) return null;
 
     const missing = needsCheck(tracked).length;
-    const checked = checkedCount(tracked);
+    const checked = checkedCount(checkableTitles);
     if (!missing) return null;
 
     const label = checked
       ? `Check ${missing} more`
-      : `Find where to watch (${tracked.length} title${tracked.length === 1 ? '' : 's'})`;
+      : `Find where to watch (${checkableTitles.length} title${checkableTitles.length === 1 ? '' : 's'})`;
 
     const button = h(
       'button',
@@ -182,7 +186,7 @@ export function renderLists(root, segments) {
       { class: 'avail-note' },
       button,
       checked
-        ? h('span', {}, `${checked} of ${tracked.length} checked`)
+        ? h('span', {}, `${checked} of ${checkableTitles.length} checked`)
         : h('span', {}, `in ${indexRegion() || 'your region'}`)
     );
   }

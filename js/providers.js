@@ -110,10 +110,19 @@ function write(type, id, providers) {
   scheduleSave();
 }
 
+/**
+ * Whether availability can be looked up at all. An AniList-only title has no
+ * TMDB id, so the lookup would fail every time — and, never recorded, it would
+ * stay "unchecked" forever and keep the Lists tab offering to check it.
+ */
+export function isCheckable(item) {
+  return (item.type === 'movie' || item.type === 'tv') && item.source !== 'anilist';
+}
+
 /** Tracked titles with no availability answer, or one old enough to redo. */
 export function needsCheck(items, entries = indexNow(), now = Date.now()) {
   return items.filter((item) => {
-    if (item.type !== 'movie' && item.type !== 'tv') return false;
+    if (!isCheckable(item)) return false;
     const hit = entries.get(itemKey(item.type, item.id));
     return !hit || now - (hit.at || 0) > STALE_AFTER;
   });

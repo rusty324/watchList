@@ -14,6 +14,7 @@ import {
   setEpisodeWatched,
   setSeasonWatched,
   setShowWatched,
+  adoptItemState,
   seasonWatchedCount,
   totalEpisodes,
   tvWatchedCount,
@@ -58,6 +59,14 @@ function openAnime(entry) {
         renderAnilistOnly(api, entry);
         return;
       }
+      // Tracked under its AniList id before TMDB had an entry? Bring that over
+      // now that it does, so there is only ever one record.
+      adoptItemState(entry, match, {
+        type: match.type,
+        id: match.id,
+        title: entry.title,
+        year: entry.year,
+      });
       // Swap this placeholder sheet for the real one rather than stacking two.
       api.close();
       setTimeout(() => {
@@ -141,16 +150,31 @@ export function openMovie(id, hint) {
 }
 
 /**
- * Read-only sheet for anime TMDB has never heard of — obscure OVAs, ONAs and
- * very new shows.
+ * Sheet for anime TMDB has never heard of — obscure OVAs, ONAs and very new
+ * shows.
  *
- * Deliberately offers no rating, watch mark or watchlist: the store is keyed on
- * TMDB ids, and minting `anilist:` keys would fragment watch state, providers
- * and Gist sync across two id spaces. Better to show what AniList knows and say
- * plainly why it can't be tracked than to leave a dead end.
+ * These are tracked like any other title, under their own `al…` id. That id
+ * can't collide with a numeric TMDB one, and everything that looks a title up by
+ * (type, id) finds it unchanged. What they lack is TMDB's data — no episodes,
+ * cast or where-to-watch — so the sheet offers the controls that don't need it
+ * and says plainly what is missing. If TMDB later gains an entry, openAnime
+ * moves what you've said onto it.
  */
 function renderAnilistOnly(api, entry) {
   api.setTitle(entry.title);
+
+  const rating = ratingRow(entry);
+  const watchlist = watchlistAction(entry);
+  const watched = checkboxAction(
+    'Watched',
+    () => getItem(entry.type, entry.id)?.watched ?? false,
+    (on) => {
+      // No season data to fill in, so for a series this is just the flag.
+      if (entry.type === 'movie') setMovieWatched(entry.id, on, snapshot(entry));
+      else setShowWatched(entry.id, on, snapshot(entry));
+      watchlist.update();
+    }
+  );
 
   const facts = [
     entry.year || null,
@@ -196,11 +220,14 @@ function renderAnilistOnly(api, entry) {
           )
         )
       : null,
+    rating.node,
+    h('div', { class: 'action-row' }, watched.node, watchlist.node),
+    hiddenNotice(entry).node,
     h(
       'div',
-      { class: 'note warn' },
+      { class: 'note' },
       h('strong', {}, 'Not on TMDB. '),
-      'This one can’t be rated or added to a list, because watch tracking is keyed on TMDB and it has no entry there.'
+      'You can still rate, hide and track it, but there are no episodes, cast or where-to-watch details for it.'
     ),
     entry.overview ? h('p', { class: 'overview' }, entry.overview) : null,
     h(

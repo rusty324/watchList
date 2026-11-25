@@ -13,7 +13,7 @@
  */
 
 import { h, icon, toast } from './ui.js';
-import { getItem, setRating, setHidden } from './store.js';
+import { getItem, setRating, setHidden, adoptItemState } from './store.js';
 import { RATING_LABELS, snapshot } from './views/parts.js';
 import { resolveToTmdb } from './anilist.js';
 
@@ -161,20 +161,24 @@ function closePopover() {
 
 async function commit(item, kind) {
   let target = item;
+  // For an AniList entry this is snapshotAnime(item), via snapshot(): the full
+  // copy a title with no TMDB record has to carry.
   let meta = snapshot(item);
 
   if (item.source === 'anilist') {
-    // AniList tiles carry no TMDB id, and both ratings and hides are keyed on
-    // TMDB ids.
     const match = await resolveToTmdb(item);
-    if (!match) {
-      toast(`No TMDB entry for “${item.title}” — open it to see why`);
-      return;
+    if (match) {
+      target = match;
+      // Minimal metadata on purpose: opening the title later refreshes it from
+      // TMDB, and an AniList cover shouldn't be persisted as the poster.
+      meta = { type: match.type, id: match.id, title: item.title, year: item.year };
+      // Tracked under its AniList id before TMDB gained an entry? Bring that
+      // over, so there is only ever one record.
+      adoptItemState(item, match, meta);
     }
-    target = match;
-    // Minimal metadata on purpose: opening the title later refreshes it from
-    // TMDB, and an AniList cover shouldn't be persisted as the poster.
-    meta = { type: match.type, id: match.id, title: item.title, year: item.year };
+    // No match: it stays under its own `al…` id, which is a perfectly good key —
+    // `type:al129` can't collide with a numeric TMDB id, and everything that
+    // looks a title up by (type, id) finds it unchanged.
   }
 
   if (kind === 'hide') {
@@ -195,7 +199,9 @@ async function commit(item, kind) {
 
 /** Which option to mark as already set, so dragging onto it reads as "undo". */
 function activeOptionOf(item) {
-  if (item.source === 'anilist') return null; // unknown until resolved
+  // For an AniList tile this finds a record only if it is tracked under its own
+  // `al…` id. One that resolves to TMDB is stored under the TMDB id, which isn't
+  // known until it is resolved — so there is nothing to show for it yet.
   const stored = getItem(item.type, item.id);
   if (stored?.hidden) return 'hide';
   return stored?.rating || null;

@@ -1099,13 +1099,13 @@ if (!animeTitles.some((t) => /Mugen Train/.test(t))) {
 }
 await shot('24-genres-anime');
 
-/* an anime with no TMDB match gets a read-only AniList sheet, not a dead end */
+/* an anime with no TMDB match opens an AniList sheet you can actually track */
 await page.locator('.grid .tile', { hasText: 'Yofukashi' }).first().click();
 await page.waitForTimeout(1400);
 const noTmdbBody = await page.locator('.sheet-body').innerText();
 console.log('no-TMDB sheet ->', noTmdbBody.split('\n').slice(0, 6).join(' / '));
 if (!/Not on TMDB/.test(noTmdbBody)) {
-  problems.push('the AniList-only sheet does not explain why the title cannot be tracked');
+  problems.push('the AniList-only sheet does not say it has no TMDB entry');
 }
 if (!/Studio Nowhere/.test(noTmdbBody)) {
   problems.push('the AniList-only sheet is missing the AniList metadata');
@@ -1113,9 +1113,22 @@ if (!/Studio Nowhere/.test(noTmdbBody)) {
 if (!(await page.locator('.sheet-body a[href*="anilist.co"]').count())) {
   problems.push('the AniList-only sheet has no link out to AniList');
 }
-// It must not offer tracking controls it cannot honour.
-if (await page.locator('.sheet-body .rating-btn').count()) {
-  problems.push('the AniList-only sheet offers rating controls it cannot store');
+// It used to refuse these; they have to be there now, and honest about what
+// is still missing.
+if ((await page.locator('.sheet-body .rating-btn').count()) !== 3) {
+  problems.push('the AniList-only sheet does not offer the three verdicts');
+}
+for (const label of ['Watched', 'Add to watchlist']) {
+  if (!(await page.locator('.sheet-body .action', { hasText: label }).count())) {
+    problems.push(`the AniList-only sheet has no "${label}" control`);
+  }
+}
+if (!/no episodes|where-to-watch/i.test(noTmdbBody)) {
+  problems.push('the AniList-only sheet does not say what it lacks');
+}
+// Things that need TMDB must not be offered, or they would fail on tap.
+if (await page.locator('.sheet-body .action', { hasText: /playlist/i }).count()) {
+  problems.push('the AniList-only sheet offers a playlist it cannot honour');
 }
 await shot('24a-anime-no-tmdb');
 await page.goBack();
@@ -1148,6 +1161,149 @@ if (!afterShowAll.includes('Spirited Away')) {
   problems.push('"Show all" did not reveal the already-rated title');
 }
 await shot('25-genres-anime-show-all');
+
+/* ---- 11b. tracking anime that TMDB has no entry for ---- */
+
+const animeTile = (name) => page.locator('.grid .tile', { hasText: name }).first();
+const animeNames = () => page.locator('.grid .tile .t-name').allTextContents();
+const alRecords = () =>
+  page.evaluate(() =>
+    Object.entries(JSON.parse(localStorage.getItem('wl.data.v1')).items)
+      .filter(([key]) => /^(tv|movie):al\d+$/.test(key))
+      .map(([key, v]) => ({
+        key, rating: v.rating, hidden: v.hidden, watched: v.watched,
+        inWatchlist: v.inWatchlist, anilistId: v.anilistId, poster: v.poster, source: v.source,
+      }))
+  );
+const holdAndPick = async (tile, kind) => {
+  await tile.scrollIntoViewIfNeeded();
+  const box = await tile.boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.waitForTimeout(650);
+  const opt = await page.locator(`.rate-opt[data-kind="${kind}"]`).boundingBox();
+  await page.mouse.move(opt.x + opt.width / 2, opt.y + opt.height / 2, { steps: 8 });
+  await page.waitForTimeout(150);
+  await page.mouse.up();
+  await page.waitForTimeout(1300);
+};
+// "Show all" is on, so a rated tile stays put rather than leaving the grid.
+if (!(await animeNames()).some((n) => /Yofukashi/.test(n))) {
+  problems.push('the no-TMDB anime is missing from the grid under Show all');
+}
+
+await holdAndPick(animeTile('Yofukashi'), 'up');
+const toastText = await page.locator('#toast').textContent();
+console.log('press-and-hold on a no-TMDB anime ->', toastText);
+if (/No TMDB entry/.test(toastText)) {
+  problems.push('press-and-hold still refuses an anime with no TMDB entry');
+}
+const afterRate = await alRecords();
+console.log('stored under ->', afterRate.map((r) => `${r.key}:${r.rating}`).join(', '));
+if (afterRate.length !== 1 || afterRate[0].rating !== 'up') {
+  problems.push(`the rating was not stored under the AniList id: ${JSON.stringify(afterRate)}`);
+}
+// The cover URL and ids have to be kept, or the Lists tab can't draw or reopen it.
+if (!afterRate[0]?.poster || !afterRate[0]?.anilistId || afterRate[0]?.source !== 'anilist') {
+  problems.push('the stored copy is missing the cover, anilistId or source');
+}
+if (!(await animeTile('Yofukashi').locator('.badge.up').count())) {
+  problems.push('the rated no-TMDB tile does not show its badge');
+}
+await shot('25a-anime-no-tmdb-rated');
+
+// Open it, mark watched, and add to the watchlist from its own sheet.
+await animeTile('Yofukashi').click();
+await page.waitForTimeout(1400);
+if ((await page.getAttribute('.sheet-body .rating-btn.up', 'aria-pressed')) !== 'true') {
+  problems.push('the sheet does not show the rating that was just set');
+}
+await page.locator('.sheet-body .action', { hasText: 'Watched' }).first().click();
+await page.waitForTimeout(400);
+await page.goBack();
+await page.waitForTimeout(900);
+const afterWatch2 = (await alRecords())[0];
+if (!afterWatch2?.watched) problems.push('marking it watched from its sheet did not stick');
+
+// It is a real library entry now: in Lists, with its cover, reopening as itself.
+await page.click('.tab[data-tab="lists"]');
+await page.waitForTimeout(900);
+const inLists = await page.locator('.grid .tile .t-name').allTextContents();
+console.log('lists now include ->', inLists.filter((n) => /Yofukashi/.test(n)).join(', ') || '(missing)');
+if (!inLists.some((n) => /Yofukashi/.test(n))) {
+  problems.push('a rated no-TMDB anime is missing from the Lists tab');
+}
+await page.locator('.grid .tile', { hasText: 'Yofukashi' }).first().click();
+await page.waitForTimeout(1400);
+if (!(await page.locator('.sheet-body a[href*="anilist.co"]').count())) {
+  problems.push('opening it from Lists did not reopen the AniList sheet');
+}
+if ((await page.getAttribute('.sheet-body .rating-btn.up', 'aria-pressed')) !== 'true') {
+  problems.push('the rating did not survive reopening from Lists');
+}
+await shot('25b-anime-no-tmdb-from-lists');
+await page.goBack();
+await page.waitForTimeout(700);
+
+// Back to the Anime grid, Show all again (the tab remembers its filters).
+await page.click('.tab[data-tab="genres"]');
+await page.waitForTimeout(800);
+if (!(await page.locator('.genre-tile').count())) {
+  await page.click('.tab[data-tab="genres"]');
+  await page.waitForTimeout(800);
+}
+await page.locator('.genre-tile', { hasText: 'Anime' }).first().click();
+await page.waitForTimeout(1300);
+if (/Show all/.test(await page.locator('.chips .chip[data-seen="toggle"]').textContent())) {
+  await page.locator('.chips .chip', { hasText: 'Show all' }).click();
+  await page.waitForTimeout(1100);
+}
+
+// Hide it: gone from the grid, and it is a hidden title like any other.
+await holdAndPick(animeTile('Yofukashi'), 'hide');
+if ((await animeNames()).some((n) => /Yofukashi/.test(n))) {
+  problems.push('a hidden no-TMDB anime is still in the Anime grid');
+}
+const hiddenIds = await page.evaluate(async () =>
+  (await import('./js/store.js')).hiddenItems().map((i) => i.id)
+);
+console.log('hidden ->', hiddenIds.join(', '));
+if (!hiddenIds.some((id) => String(id).startsWith('al'))) {
+  problems.push('the hidden no-TMDB anime is not in Settings → Hidden titles');
+}
+// Un-hiding brings it back.
+await page.evaluate(async () => {
+  const store = await import('./js/store.js');
+  for (const item of store.hiddenItems()) store.setHidden(item.type, item.id, false);
+});
+await page.waitForTimeout(1200);
+if (!(await animeNames()).some((n) => /Yofukashi/.test(n))) {
+  problems.push('un-hiding did not bring the no-TMDB anime back');
+}
+
+// The latent bug this surfaced: an anime that DOES resolve to TMDB, once
+// hidden, used to come straight back, because the tile's own `al…` id has no
+// stored record for the usual hide check to find. It must hold under Show all.
+await holdAndPick(animeTile('Spirited Away'), 'hide');
+if ((await animeNames()).includes('Spirited Away')) {
+  problems.push('a hidden TMDB-resolved anime is still in the Anime grid under Show all');
+}
+await page.reload({ waitUntil: 'networkidle' });
+await page.waitForTimeout(1500);
+if (/Show all/.test(await page.locator('.chips .chip[data-seen="toggle"]').textContent())) {
+  await page.locator('.chips .chip', { hasText: 'Show all' }).click();
+  await page.waitForTimeout(1100);
+}
+if ((await animeNames()).includes('Spirited Away')) {
+  problems.push('a hidden TMDB-resolved anime came back after a reload');
+}
+await shot('25c-anime-hidden-holds');
+// Leave the fixtures as they were for everything after this.
+await page.evaluate(async () => {
+  const store = await import('./js/store.js');
+  for (const item of store.hiddenItems()) store.setHidden(item.type, item.id, false);
+});
+await page.waitForTimeout(900);
 
 /* ---- 12. AniList enrichment on an anime sheet ---- */
 await page.click('.tab[data-tab="browse"]');

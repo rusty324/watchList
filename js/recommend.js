@@ -167,7 +167,9 @@ export function excludeSet(items) {
  */
 export function seedsFrom(items) {
   return Object.values(items)
-    .filter((i) => i.rating === 'up')
+    // An AniList-only title has no TMDB id to ask for recommendations with:
+    // /tv/al129/recommendations would 404 on every rebuild.
+    .filter((i) => i.rating === 'up' && i.source !== 'anilist')
     .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
     .slice(0, MAX_SEEDS);
 }

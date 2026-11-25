@@ -1143,6 +1143,159 @@ test('title matching does not reject on year alone', () => {
   assert.equal(anilist.rejectSeen(entries, {}).length, 1);
 });
 
+/* ---------- AniList-only titles ---------- */
+
+const NO_TMDB = {
+  source: 'anilist',
+  anilistId: 777,
+  type: 'tv',
+  id: 'al777',
+  title: 'Yofukashi no Nazonazo',
+  originalTitle: '夜更かしのなぞなぞ',
+  nativeTitle: '夜更かしのなぞなぞ',
+  format: 'ONA',
+  year: 2024,
+  poster: 'https://s4.anilist.co/cover.jpg',
+  genres: ['Mystery'],
+  overview: 'A fixture.',
+  episodes: 12,
+  anilistScore: 7.4,
+  studio: 'Studio Nowhere',
+  tags: ['Iyashikei'],
+};
+
+test('a stored AniList title keeps everything needed to reopen it', () => {
+  const snap = anilist.snapshotAnime({ ...NO_TMDB, extraNoise: 'dropped' });
+  // `source` and `anilistId` are what route it back to the AniList sheet from
+  // the Lists tab instead of asking TMDB for an id it has never heard of.
+  assert.equal(snap.source, 'anilist');
+  assert.equal(snap.anilistId, 777);
+  // Unlike a TMDB title, the cover has to be kept: there is nothing to refresh
+  // it from later.
+  assert.equal(snap.poster, NO_TMDB.poster);
+  assert.equal(snap.studio, 'Studio Nowhere');
+  assert.ok(!('extraNoise' in snap));
+});
+
+test('an AniList-only title is tracked under its own id like any other', () => {
+  resetStore();
+  // The same snapshot the sheet's controls persist through.
+  const meta = anilist.snapshotAnime(NO_TMDB);
+  store.setRating('tv', 'al777', 'up', meta);
+
+  assert.equal(store.getItem('tv', 'al777').rating, 'up');
+  assert.equal(store.getItem('tv', 'al777').anilistId, 777);
+  assert.ok(rec.excludeSet(store.state.items).has('tv:al777'));
+  // It can't collide with a numeric TMDB id of the same type.
+  assert.equal(store.getItem('tv', 777), null);
+  // And it counts as tracked, so a prune doesn't drop it.
+  assert.equal(store.pruneUntracked(), 0);
+});
+
+test('an AniList-only title is never a recommendation seed', () => {
+  // There is no TMDB id to request /recommendations with, so it would 404 on
+  // every rebuild.
+  const items = {
+    'tv:al777': { ...NO_TMDB, rating: 'up', updatedAt: 9 },
+    'movie:1': { type: 'movie', id: 1, title: 'Real', rating: 'up', updatedAt: 5 },
+  };
+  assert.deepEqual(rec.seedsFrom(items).map((i) => i.id), [1]);
+});
+
+test('an AniList-only title is never offered for an availability check', () => {
+  // The lookup would fail every time and, never recorded, keep it "unchecked"
+  // forever — so the Lists tab would offer to check it for good.
+  assert.equal(providers.isCheckable(NO_TMDB), false);
+  assert.equal(providers.isCheckable({ type: 'tv', id: 1 }), true);
+  assert.deepEqual(providers.needsCheck([NO_TMDB, { type: 'movie', id: 2 }], new Map()).map((i) => i.id), [2]);
+});
+
+test('a hidden anime is dropped from the grid, including under Show all', () => {
+  const entries = [
+    { title: 'Attack on Titan', originalTitle: 'Shingeki no Kyojin', year: 2013 },
+    { title: 'Trigun', originalTitle: '', year: 1998 },
+  ];
+  // Hidden after resolving to TMDB, so it is stored under a TMDB id the AniList
+  // tile doesn't carry — only title and year can connect the two.
+  const stored = { 'tv:1429': { title: 'Attack on Titan', year: 2013, hidden: true } };
+
+  // "Show all" skips rejectSeen, so the narrower rule has to hold it alone.
+  assert.deepEqual(anilist.rejectHidden(entries, stored).map((e) => e.title), ['Trigun']);
+  // And hidden counts as dealt with under "New to me" too, as in excludeSet.
+  assert.deepEqual(anilist.rejectSeen(entries, stored).map((e) => e.title), ['Trigun']);
+
+  // Rated but not hidden: gone under "New to me", still there under "Show all".
+  const rated = { 'tv:1429': { title: 'Attack on Titan', year: 2013, rating: 'up' } };
+  assert.equal(anilist.rejectHidden(entries, rated).length, 2);
+  assert.equal(anilist.rejectSeen(entries, rated).length, 1);
+  // Tolerates the usual one-year drift, and doesn't match on year alone.
+  assert.equal(
+    anilist.rejectHidden([{ title: 'Attack on Titan', year: 2014 }], stored).length,
+    0
+  );
+  assert.equal(
+    anilist.rejectHidden([{ title: 'Something Else', year: 2013 }], stored).length,
+    1
+  );
+});
+
+test('adopting moves what you said onto the TMDB record and clears the old one', () => {
+  resetStore();
+  store.setRating('tv', 'al777', 'up', anilist.snapshotAnime(NO_TMDB));
+  store.setWatchlist('tv', 'al777', true);
+
+  const moved = store.adoptItemState(
+    { type: 'tv', id: 'al777' },
+    { type: 'tv', id: 4242 },
+    { type: 'tv', id: 4242, title: 'Yofukashi no Nazonazo', year: 2024 }
+  );
+  assert.equal(moved, true);
+
+  const real = store.getItem('tv', 4242);
+  assert.equal(real.rating, 'up');
+  assert.equal(real.inWatchlist, true);
+  assert.equal(real.title, 'Yofukashi no Nazonazo');
+
+  // Cleared rather than deleted: items have no tombstones, so a delete would
+  // simply be restored from the Gist on the next pull.
+  const old = store.getItem('tv', 'al777');
+  assert.ok(old, 'the old record was deleted');
+  assert.equal(old.rating, null);
+  assert.equal(old.inWatchlist, false);
+  assert.equal(old.mergedInto, 'tv:4242');
+  assert.equal(store.isTracked(old), false);
+
+  // Nothing left to move, so a second pass is a no-op.
+  assert.equal(
+    store.adoptItemState({ type: 'tv', id: 'al777' }, { type: 'tv', id: 4242 }, {}),
+    false
+  );
+});
+
+test('adopting keeps what the TMDB record already says', () => {
+  resetStore();
+  store.setRating('tv', 4242, 'down', { type: 'tv', id: 4242, title: 'Already Mine' });
+  store.setRating('tv', 'al777', 'up', anilist.snapshotAnime(NO_TMDB));
+  store.setHidden('tv', 'al777', true);
+
+  store.adoptItemState({ type: 'tv', id: 'al777' }, { type: 'tv', id: 4242 }, { title: 'Overwritten?' });
+
+  const real = store.getItem('tv', 4242);
+  // The record you have actually been using wins; the old one only fills gaps.
+  assert.equal(real.rating, 'down');
+  assert.equal(real.hidden, true);
+  assert.equal(real.title, 'Already Mine');
+});
+
+test('an AniList-only title survives a sync like any other item', () => {
+  const merged = sync.mergeData(
+    { items: { 'tv:al777': { ...NO_TMDB, rating: 'up', updatedAt: 200 } } },
+    { items: { 'tv:al777': { ...NO_TMDB, rating: 'down', updatedAt: 100 } } }
+  );
+  assert.equal(merged.items['tv:al777'].rating, 'up');
+  assert.equal(merged.items['tv:al777'].anilistId, 777);
+});
+
 test('anime detection is narrow enough not to fire on lookalikes', () => {
   const anime = { originalLanguage: 'ja', genres: ['Animation', 'Fantasy'] };
   assert.equal(anilist.looksLikeAnime(anime), true);

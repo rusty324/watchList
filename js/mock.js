@@ -318,6 +318,11 @@ const WATCH = {
 /* AniList fixtures for the Anime tile and detail-sheet enrichment. Spirited
  * Away is deliberately present in both TMDB and AniList so the enrichment path
  * (TMDB sheet + AniList score/studio/tags) can be exercised end to end. */
+/* A cover that resolves from wherever the app is being served, so the fixture
+ * for an AniList-only title carries a real absolute URL — which is what the
+ * app has to keep for it — without the browser reaching for the network. */
+const LOCAL_COVER = new URL('icons/icon-192.png', globalThis.location?.href || 'http://localhost/').href;
+
 const ANILIST = [
   {
     id: 129,
@@ -418,7 +423,7 @@ const ANILIST = [
     averageScore: 68,
     genres: ['Comedy'],
     description: 'A short-form riddle series with no TMDB entry.',
-    coverImage: { large: '' },
+    coverImage: { large: LOCAL_COVER },
     studios: { nodes: [{ name: 'Studio Nowhere' }] },
     tags: [{ name: 'Episodic', rank: 75, isGeneralSpoiler: false }],
   },

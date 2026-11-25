@@ -224,6 +224,43 @@ export function setWatchlist(type, id, on, meta) {
 }
 
 /**
+ * Move what you've said about one item onto another.
+ *
+ * For an AniList-only title that TMDB later gains an entry for: it was tracked
+ * under its `al…` id, and the TMDB record is now the real one. TMDB's existing
+ * answers win where both have one — they are the record you've been actually
+ * using — and the old record only fills gaps.
+ *
+ * The old record is cleared rather than deleted. Items have no tombstones, so a
+ * delete would just be restored from the Gist on the next pull; a cleared one
+ * merges as an ordinary empty item.
+ */
+export function adoptItemState(from, to, meta) {
+  const src = getItem(from.type, from.id);
+  if (!src || !(src.rating || src.hidden || src.watched || src.inWatchlist)) return false;
+
+  const dst = getItem(to.type, to.id);
+  const watched = Boolean(dst?.watched || src.watched);
+  upsertItem(to.type, to.id, {
+    // Only needed to create the record; an existing TMDB one keeps its own.
+    ...(dst ? {} : meta || {}),
+    rating: dst?.rating ?? src.rating ?? null,
+    hidden: Boolean(dst?.hidden || src.hidden),
+    watched,
+    inWatchlist: !watched && Boolean(dst?.inWatchlist || src.inWatchlist),
+  });
+  upsertItem(from.type, from.id, {
+    rating: null,
+    hidden: false,
+    watched: false,
+    inWatchlist: false,
+    mergedInto: itemKey(to.type, to.id),
+  });
+  persist('adopt');
+  return true;
+}
+
+/**
  * "Stop showing me this."
  *
  * Distinct from a Not-for-me rating, which is a verdict about the title and
